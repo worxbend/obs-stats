@@ -195,6 +195,121 @@ mod tests {
         }
     }
 
+    /// Populate a snapshot enough that charts, meters and lists all draw.
+    fn populated(app: &mut App) {
+        use crate::obs::stats::{AudioInput, Scene, SceneList, StreamStatus, VideoSettings};
+
+        app.snapshot.version.obs_version = "31.0.2".into();
+        app.snapshot.video = VideoSettings {
+            base_width: 1920,
+            base_height: 1080,
+            output_width: 1280,
+            output_height: 720,
+            fps_numerator: 60,
+            fps_denominator: 1,
+        };
+        app.snapshot.stream = StreamStatus {
+            active: true,
+            bytes: 1_000_000,
+            total_frames: 1000,
+            ..StreamStatus::default()
+        };
+        app.snapshot.scenes = SceneList {
+            current_program: "Live".into(),
+            scenes: vec![Scene {
+                name: "Live".into(),
+                index: 0,
+            }],
+            ..SceneList::default()
+        };
+        app.snapshot.inputs = vec![AudioInput {
+            name: "Mic/Aux".into(),
+            kind: "pulse_input_capture".into(),
+            volume_db: -6.0,
+            peaks: vec![0.4],
+            ..AudioInput::default()
+        }];
+        for step in 0..80 {
+            let wobble = f64::from(step % 8);
+            app.snapshot.history.cpu.push(20.0 + wobble);
+            app.snapshot.history.fps.push(59.0 + wobble / 10.0);
+            app.snapshot.history.frame_time.push(3.0 + wobble / 4.0);
+            app.snapshot.history.congestion.push(wobble);
+            app.snapshot
+                .history
+                .stream_bitrate
+                .push(5_000_000.0 + wobble * 100_000.0);
+        }
+    }
+
+    #[test]
+    fn no_widget_punches_a_hole_in_the_themed_background() {
+        // ratatui's Chart paints its plot area via a Canvas whose background
+        // defaults to Color::Reset, which wipes the themed background and
+        // exposes the terminal's own — wallpaper, transparency and all. Any
+        // widget that does the same in future fails here.
+        use ratatui::style::Color;
+
+        let mut config = Config::default();
+        config.ui.theme = "tokyo-night".to_string();
+        let theme = crate::tui::theme::resolve(&config.ui.theme);
+        assert!(
+            matches!(theme.bg, Color::Rgb(..)),
+            "this test needs a theme with a concrete background"
+        );
+
+        for view in View::ALL {
+            let mut app = App::new(config.clone());
+            app.view = view;
+            populated(&mut app);
+
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+
+            for y in 0..buffer.area.height {
+                for x in 0..buffer.area.width {
+                    let bg = buffer[(x, y)].bg;
+                    // A selected row painting its highlight is the one
+                    // legitimate departure from the page background.
+                    assert!(
+                        bg == theme.bg || bg == theme.highlight_bg,
+                        "{} leaves cell ({x},{y}) on {bg:?} — the terminal's own background \
+                         shows through wherever this is not the theme's",
+                        view.id()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_mono_theme_deliberately_keeps_the_terminal_background() {
+        // The inverse of the test above: mono exists to inherit whatever the
+        // terminal already uses, so nothing may force a background on it.
+        use ratatui::style::Color;
+
+        let mut config = Config::default();
+        config.ui.theme = "mono".to_string();
+        let mut app = App::new(config);
+        populated(&mut app);
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let bg = buffer[(x, y)].bg;
+                assert!(
+                    // Selected rows legitimately paint a highlight.
+                    bg == Color::Reset || bg == crate::tui::theme::resolve("mono").highlight_bg,
+                    "mono forced {bg:?} onto cell ({x},{y})"
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_theme_renders_every_view() {
         // Cheap insurance that no palette contains a value the widgets choke on.

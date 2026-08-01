@@ -175,6 +175,14 @@ pub fn line_chart(
 
     let axis_style = Style::default().fg(theme.muted);
     let chart = Chart::new(vec![dataset])
+        // Chart paints its plot area through a Canvas whose background is
+        // `self.style.bg.unwrap_or(Color::Reset)`. Leave the style unset and
+        // that Reset punches a hole straight through the themed background,
+        // exposing the terminal's own — visible as a mismatched rectangle
+        // (and any wallpaper or transparency behind it). The theme's own
+        // `Color::Reset`, as in the mono palette, still passes through here,
+        // which is what that theme wants.
+        .style(Style::default().bg(theme.bg))
         .x_axis(
             Axis::default()
                 .style(Style::default().fg(theme.border))

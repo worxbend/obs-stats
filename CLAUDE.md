@@ -79,6 +79,13 @@ if one answers, which is useful for eyeballing but not for committing.
 `--text` dumps the layouts as plain text, which is the fastest way to check a
 layout change; add `--ascii` to inspect the fallback rendering.
 
+**The screenshots cannot catch background bugs.** The SVG writer resolves
+`Color::Reset` to the theme's own background, so a widget that wipes the themed
+background still looks correct in `docs/images` while exposing the terminal's
+wallpaper in a real session — which is exactly how ratatui's `Chart` shipped a
+transparent plot area in v0.1.1. `no_widget_punches_a_hole_in_the_themed_background`
+asserts on the cell buffer instead, which is the ground truth.
+
 Note that ratatui's `Chart` and `Sparkline` have no ASCII mode — their axes are
 box-drawing and their series braille or block elements — so `views::ascii_plot`
 and `views::ascii_bars` stand in for them. A rendering test walks every view ×
