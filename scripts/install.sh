@@ -32,6 +32,20 @@ trap cleanup EXIT INT TERM
 
 # --- platform detection ----------------------------------------------------
 
+# True on a musl-based system (Alpine, Void musl, and friends).
+is_musl() {
+    # musl's ldd writes its banner to stderr and exits non-zero, so the
+    # redirect matters and the exit status must not be trusted.
+    if ldd --version 2>&1 | grep -qi musl; then
+        return 0
+    fi
+    # Distros without a usable `ldd` still ship the loader under a known name.
+    for loader in /lib/ld-musl-x86_64.so.1 /lib/ld-musl-aarch64.so.1; do
+        [ -e "$loader" ] && return 0
+    done
+    return 1
+}
+
 detect_target() {
     os="$(uname -s)"
     arch="$(uname -m)"
@@ -50,9 +64,13 @@ detect_target() {
         *) die "unsupported architecture: $arch" ;;
     esac
 
-    # macOS ships no aarch64-unknown-linux-gnu, and Linux has no
-    # aarch64-apple-darwin problem — but musl systems need the static build.
-    if [ "$os" = "Linux" ] && [ "$arch_part" = "x86_64" ] && ! ldd --version 2>&1 | grep -qi glibc; then
+    # Prefer the glibc build on Linux/x86-64, and fall back to the static musl
+    # one only when musl is positively detected.
+    #
+    # Detecting glibc instead would be the obvious way round, and is wrong:
+    # GNU ldd prints "ldd (GNU libc) 2.44" — no occurrence of the string
+    # "glibc" at all — so a glibc host would silently get the musl archive.
+    if [ "$os" = "Linux" ] && [ "$arch_part" = "x86_64" ] && is_musl; then
         os_part="unknown-linux-musl"
     fi
 
