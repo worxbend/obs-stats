@@ -4,9 +4,11 @@
 //! buffer behind every sparkline and chart. Neither performs I/O, so the whole
 //! layer is exercised in tests by feeding it synthetic polls.
 
+pub mod alerts;
 pub mod history;
 pub mod snapshot;
 
+pub use alerts::{Alert, AlertConfig, AlertKind, Severity};
 pub use history::History;
 pub use snapshot::{ConnectionState, Health, Histories, LogEntry, Snapshot};
 

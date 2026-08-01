@@ -4,6 +4,7 @@
 //! theme and the Unicode flag, which keeps the widgets testable as pure
 //! text-and-style producers.
 
+pub mod banner;
 pub mod chrome;
 pub mod header;
 pub mod help;

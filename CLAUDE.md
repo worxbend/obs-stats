@@ -7,9 +7,10 @@ A btop-style terminal dashboard for OBS Studio. Single Rust binary, no daemon.
 ```
 src/
   obs/        obs-websocket 5.x: protocol, auth, session task, typed payloads
-  metrics/    Snapshot (the model), History (ring buffers), derived rates
+  metrics/    Snapshot (the model), History (ring buffers), alerts, derived rates
   config/     YAML schema, XDG paths, loading, secret resolution
   tui/        app (state machine), keys (keymap), views/, widgets/, run (terminal)
+  notify.rs   desktop notifications, on their own thread
   probe.rs    one-shot collection, shared by `once` and the screenshot generator
   cli.rs      clap definitions and flag→config layering
 examples/
@@ -50,7 +51,7 @@ row's mute marker are both covered by tests that assert this.
 
 ## Testing
 
-`cargo test` — 361 tests, no terminal and no live OBS required. The TUI is
+`cargo test` — 411 tests, no terminal and no live OBS required. The TUI is
 exercised through ratatui's `TestBackend`; the client through synthetic
 `Update`s. Rendering tests cover every view × every theme, plus cramped
 terminals, so a layout that underflows is caught.
@@ -92,6 +93,17 @@ and `views::ascii_bars` stand in for them. A rendering test walks every view ×
 overlay in ASCII mode and fails on any Arrows / Box Drawing / Block Elements /
 Geometric Shapes / emoji codepoint, so this cannot silently regress.
 
+**Alerts are about rate, not totals.** `metrics::alerts::Watcher` works on
+per-poll deltas over a rolling window, with a threshold and a per-cause
+cooldown, and only while an output is running. The first observation is a
+baseline only, and a counter going backwards counts as zero — an output restart
+must never look like a catastrophic loss.
+
+**Notifications never touch the render loop.** `notify::Notifier` owns a thread
+and a channel; `send` is fire-and-forget. Showing a notification is a
+synchronous D-Bus round trip, so doing it inline would reintroduce exactly the
+stall the architecture exists to avoid.
+
 ## Things that are deliberate
 
 - **Read-only.** Selecting a scene does not switch it. This is a monitor.
@@ -101,5 +113,7 @@ Geometric Shapes / emoji codepoint, so this cannot silently regress.
   on one keypress is disorienting.
 - **Pause freezes metrics but not connection state.** A paused dashboard must
   never hide the fact that OBS went away.
+- **The banner outranks by severity.** A render-lag warning must not displace a
+  "viewers are seeing stutter" banner that is still on screen.
 - **Chart y-axes window in.** A 5.4–6.5 Mbps series on a 0–7 Mbps axis is a flat
   line. See `History::axis_range`.

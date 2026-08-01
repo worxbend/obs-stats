@@ -5,24 +5,25 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>obs-stats — a btop-style terminal dashboard for OBS Studio</title>
 <meta name="description" content="A btop-style terminal dashboard for OBS Studio. Watch CPU, frame pacing, encoder health, outputs, scenes and audio live over obs-websocket 5.x. One static Rust binary.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231B1916'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23D97757' font-family='monospace'>▤</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231E1E2E'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23CBA6F7' font-family='monospace'>▤</text></svg>">
 <meta property="og:title" content="obs-stats">
 <meta property="og:description" content="A btop-style terminal dashboard for OBS Studio.">
 <meta property="og:type" content="website">
 <style>
 :root {
-  --bg: #14120F;
-  --bg-soft: #1B1916;
-  --bg-card: #201D19;
-  --fg: #ECE8E1;
-  --muted: #9A958A;
-  --border: #322E28;
-  --accent: #D97757;
-  --accent-soft: #E8C59E;
-  --success: #87B37B;
-  --warning: #E0B44C;
-  --danger: #E06C5F;
-  --info: #7BA9C7;
+  /* Catppuccin Mocha */
+  --bg: #1E1E2E;          /* base     */
+  --bg-soft: #181825;     /* mantle   */
+  --bg-card: #313244;     /* surface0 */
+  --fg: #CDD6F4;          /* text     */
+  --muted: #A6ADC8;       /* subtext0 */
+  --border: #45475A;      /* surface1 */
+  --accent: #CBA6F7;      /* mauve    */
+  --accent-soft: #F5C2E7; /* pink     */
+  --success: #A6E3A1;     /* green    */
+  --warning: #F9E2AF;     /* yellow   */
+  --danger: #F38BA8;      /* red      */
+  --info: #89B4FA;        /* blue     */
   --radius: 12px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -30,18 +31,19 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #FBF9F6;
-    --bg-soft: #FFFFFF;
+    /* Catppuccin Latte */
+    --bg: #EFF1F5;          /* base     */
+    --bg-soft: #E6E9EF;     /* mantle   */
     --bg-card: #FFFFFF;
-    --fg: #23201C;
-    --muted: #6B655C;
-    --border: #E4DED4;
-    --accent: #B8552F;
-    --accent-soft: #8A6033;
-    --success: #4E7A42;
-    --warning: #97701A;
-    --danger: #A93E33;
-    --info: #3C6F8C;
+    --fg: #4C4F69;          /* text     */
+    --muted: #6C6F85;       /* subtext0 */
+    --border: #CCD0DA;      /* surface0 */
+    --accent: #8839EF;      /* mauve    */
+    --accent-soft: #EA76CB; /* pink     */
+    --success: #40A02B;     /* green    */
+    --warning: #DF8E1D;     /* yellow   */
+    --danger: #D20F39;      /* red      */
+    --info: #1E66F5;        /* blue     */
   }
 }
 
@@ -152,7 +154,7 @@ h1 span { color: var(--accent); }
   transition: transform 0.12s ease, border-color 0.12s ease;
 }
 .btn:hover { text-decoration: none; transform: translateY(-1px); }
-.btn-primary { background: var(--accent); color: #1B1916; border-color: var(--accent); }
+.btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .btn-ghost { color: var(--fg); background: var(--bg-soft); }
 .btn-ghost:hover { border-color: var(--accent); }
 
@@ -187,7 +189,7 @@ figure { margin: 0; }
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-soft);
-  box-shadow: 0 18px 44px -22px rgba(0,0,0,0.65);
+  box-shadow: 0 18px 44px -22px rgba(17, 17, 27, 0.75);
 }
 .shot img { display: block; width: 100%; height: auto; }
 
@@ -337,6 +339,7 @@ code {
   <nav class="nav wrap">
     <a class="brand" href="#top">obs<span>-</span>stats</a>
     <a class="link" href="#views">Views</a>
+    <a class="link" href="#alerts">Alerts</a>
     <a class="link" href="#metrics">Metrics</a>
     <a class="link" href="#keys">Keys</a>
     <a class="link" href="#themes">Themes</a>
@@ -351,13 +354,15 @@ code {
   <p class="tagline">A btop-style terminal dashboard for OBS&nbsp;Studio.</p>
   <p class="sub">
     Watch CPU, frame pacing, encoder health, outputs, scenes and audio — live, from a
-    terminal, over obs-websocket&nbsp;5.x. One static Rust binary. No daemon.
+    terminal, over obs-websocket&nbsp;5.x. Get told the moment frames start dropping.
+    One static Rust binary. No daemon.
   </p>
 
   <div class="badges">
     <span class="badge"><b>Rust</b> 2024</span>
     <span class="badge"><b>ratatui</b> + crossterm</span>
     <span class="badge"><b>obs-websocket</b> 5.x</span>
+    <span class="badge"><b>desktop</b> notifications</span>
     <span class="badge"><b>24</b> themes</span>
     <span class="badge"><b>MIT</b> licensed</span>
   </div>
@@ -409,6 +414,11 @@ code {
         <span class="icon" style="color:var(--success)">●</span>
         <h3>A verdict, not a number</h3>
         <p>Drop rates, congestion, frame budget and FPS-against-target reduce to one word you can read from across the room.</p>
+      </div>
+      <div class="card">
+        <span class="icon" style="color:var(--danger)">🔔</span>
+        <h3>It tells you, unprompted</h3>
+        <p>You are presenting, not watching a terminal. Frames actually being lost raise a banner across every view and a desktop notification naming the cause and the fix.</p>
       </div>
       <div class="card">
         <span class="icon" style="color:var(--accent-soft)">♪</span>
@@ -482,6 +492,82 @@ code {
         <img src="images/log.svg" alt="Log view listing timestamped OBS events" loading="lazy">
       </figure>
     </div>
+  </div>
+</section>
+
+<section id="alerts">
+  <div class="wrap">
+    <h2>You get told when it matters</h2>
+    <p class="lede">
+      The dashboard is only useful if you are looking at it, and while you are streaming
+      you are not. So frames actually being lost raise a banner across every view — and a
+      Linux desktop notification, so it reaches you behind a full-screen scene.
+    </p>
+
+    <figure class="shot" style="margin-top:0">
+      <img src="images/alert.svg" alt="The Stream view with a red DROPPING FRAMES banner reading '14 frames in 10s — viewers are seeing stutter', followed by the remedy" loading="lazy">
+    </figure>
+    <figcaption>The banner names the cause, the count, and what to change.</figcaption>
+
+    <div class="grid" style="margin-top:2.4rem">
+      <div class="card">
+        <h3>Rate, not totals</h3>
+        <p>A stream that dropped forty frames an hour ago and none since is healthy. Alerts fire on frames lost within a rolling window, so they mean “right now”.</p>
+      </div>
+      <div class="card">
+        <h3>Quiet by default</h3>
+        <p>A threshold, a rolling window, a cooldown, and only while an output is running. One stray frame in a 60&nbsp;fps stream will not train you to ignore the alert.</p>
+      </div>
+      <div class="card">
+        <h3>No false starts</h3>
+        <p>The first poll only sets a baseline, and a counter going backwards — every output restart — counts as zero loss rather than an enormous one.</p>
+      </div>
+      <div class="card">
+        <h3>Nothing to install</h3>
+        <p>Notifications speak D-Bus directly with a pure-Rust client. No libnotify to link, no <code>notify-send</code> to shell out to, and the binary stays static.</p>
+      </div>
+      <div class="card">
+        <h3>Never blocks a frame</h3>
+        <p>Delivery runs on its own thread. A wedged notification daemon cannot stall the render loop, and after three failures obs-stats stops trying.</p>
+      </div>
+      <div class="card">
+        <h3>Degrades quietly</h3>
+        <p>No session bus — a TTY, ssh, a container — and notifications are skipped automatically. The banner still works, and so does the log.</p>
+      </div>
+    </div>
+
+    <div class="cols" style="margin-top:2.4rem">
+      <table>
+        <thead><tr><th>Alert</th><th>Cause</th></tr></thead>
+        <tbody>
+          <tr><td><b style="color:var(--danger)">DROPPING FRAMES</b></td><td>Network could not deliver encoded frames</td></tr>
+          <tr><td><b style="color:var(--danger)">RECONNECTING</b></td><td>The stream dropped</td></tr>
+          <tr><td><b style="color:var(--warning)">ENCODER LAG</b></td><td>Encoder could not keep up</td></tr>
+          <tr><td><b style="color:var(--warning)">RENDER LAG</b></td><td>Renderer could not build frames in time</td></tr>
+        </tbody>
+      </table>
+
+      <table>
+        <thead><tr><th>Control</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>--no-notify</code></td><td>Keep the banner, skip the desktop</td></tr>
+          <tr><td><code>--no-alerts</code></td><td>Turn the whole thing off</td></tr>
+          <tr><td><code>min_frames</code></td><td>How many lost frames it takes</td></tr>
+          <tr><td><code>cooldown_seconds</code></td><td>Minimum gap per cause</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="install" style="margin-left:0;margin-top:2rem">
+<span class="c"># see what your desktop does with them</span>
+<span class="p">$</span> cargo run --example notification_check
+    </div>
+
+    <p class="lede" style="margin-top:1.6rem">
+      Notifications are Linux-only — on macOS and Windows the dependency is not even
+      compiled in, and alerts appear in the dashboard alone. Full detail and tuning in
+      <a href="https://github.com/worxbend/obs-stats/blob/main/docs/alerts.md">docs/alerts.md</a>.
+    </p>
   </div>
 </section>
 
@@ -634,6 +720,7 @@ code {
     <a href="https://github.com/worxbend/obs-stats">GitHub</a>
     <a href="https://github.com/worxbend/obs-stats/blob/main/docs/configuration.md">Configuration</a>
     <a href="https://github.com/worxbend/obs-stats/blob/main/docs/metrics.md">Metrics</a>
+    <a href="https://github.com/worxbend/obs-stats/blob/main/docs/alerts.md">Alerts</a>
     <a href="https://github.com/worxbend/obs-stats/issues">Issues</a>
     <span class="sep">Built with <a href="https://ratatui.rs">ratatui</a></span>
   </div>

@@ -23,6 +23,7 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::notify::Notifier;
 use crate::obs::client::{self, Command, ConnectionParams};
 use crate::tui::app::App;
 use crate::tui::keys::{self, Action};
@@ -41,7 +42,11 @@ pub async fn run(config: Config, params: ConnectionParams) -> Result<()> {
     let (mut updates, commands) = client::spawn(params);
 
     let mut terminal = enter(app.config.ui.mouse)?;
-    let result = event_loop(&mut terminal, &mut app, &mut updates, &commands).await;
+    // Started before the loop so a notification daemon that is slow to answer
+    // cannot delay the first frame.
+    let notifier = Notifier::spawn(app.config.alerts.desktop && app.config.alerts.enabled);
+
+    let result = event_loop(&mut terminal, &mut app, &mut updates, &commands, &notifier).await;
     leave(&mut terminal, app.config.ui.mouse)?;
 
     // Best effort: the task may already be gone if it hit a fatal error.
@@ -55,6 +60,7 @@ async fn event_loop(
     app: &mut App,
     updates: &mut tokio::sync::mpsc::Receiver<client::Update>,
     commands: &tokio::sync::mpsc::Sender<Command>,
+    notifier: &Notifier,
 ) -> Result<()> {
     let mut events = EventStream::new();
     let mut frames = tokio::time::interval(FRAME_INTERVAL);
@@ -87,19 +93,21 @@ async fn event_loop(
             }
 
             update = updates.recv() => {
-                match update {
-                    Some(update) => app.apply(update, Instant::now()),
+                let update = update.unwrap_or_else(||
                     // The session task ended without telling us; treat that as
                     // a disconnect rather than quitting the UI out from under
                     // the user.
-                    None => app.apply(
-                        client::Update::Disconnected {
-                            reason: "the OBS session task stopped".into(),
-                            hint: None,
-                            retry_in: Duration::from_secs(0),
-                        },
-                        Instant::now(),
-                    ),
+                    client::Update::Disconnected {
+                        reason: "the OBS session task stopped".into(),
+                        hint: None,
+                        retry_in: Duration::from_secs(0),
+                    }
+                );
+
+                // Sending is fire-and-forget: the notifier owns its own thread,
+                // so a wedged desktop cannot stall a frame.
+                for alert in app.apply(update, Instant::now()) {
+                    notifier.send(&alert);
                 }
             }
 

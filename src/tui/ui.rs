@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Paragraph, Tabs};
 use crate::tui::app::App;
 use crate::tui::keys::Overlay;
 use crate::tui::view::View;
-use crate::tui::widgets::{header, help, statusbar, themes};
+use crate::tui::widgets::{banner, header, help, statusbar, themes};
 use crate::tui::{views, widgets::chrome};
 
 /// Height of the tab strip.
@@ -38,9 +38,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    let [header_area, tabs_area, body_area, status_area] = Layout::vertical([
+    // The banner only takes a row when there is one to show, so an untroubled
+    // dashboard loses nothing to it.
+    let banner_height = if app.banner.is_some() {
+        banner::HEIGHT
+    } else {
+        0
+    };
+
+    let [header_area, tabs_area, banner_area, body_area, status_area] = Layout::vertical([
         Constraint::Length(header::HEIGHT),
         Constraint::Length(TABS_HEIGHT),
+        Constraint::Length(banner_height),
         Constraint::Min(4),
         Constraint::Length(statusbar::HEIGHT),
     ])
@@ -48,6 +57,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     header::render(frame, header_area, app);
     render_tabs(frame, tabs_area, app);
+    banner::render(frame, banner_area, app);
     views::render(frame, body_area, app);
     statusbar::render(frame, status_area, app);
 
@@ -262,6 +272,7 @@ mod tests {
             let mut app = App::new(config.clone());
             app.view = view;
             populated(&mut app);
+            with_banner(&mut app, crate::metrics::AlertKind::NetworkDropped);
 
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
@@ -270,10 +281,14 @@ mod tests {
             for y in 0..buffer.area.height {
                 for x in 0..buffer.area.width {
                     let bg = buffer[(x, y)].bg;
-                    // A selected row painting its highlight is the one
-                    // legitimate departure from the page background.
+                    // Three deliberate departures from the page background: a
+                    // selected row's highlight, and the alert banner's bar,
+                    // which is coloured by severity on purpose.
                     assert!(
-                        bg == theme.bg || bg == theme.highlight_bg,
+                        bg == theme.bg
+                            || bg == theme.highlight_bg
+                            || bg == theme.danger
+                            || bg == theme.warning,
                         "{} leaves cell ({x},{y}) on {bg:?} — the terminal's own background \
                          shows through wherever this is not the theme's",
                         view.id()
@@ -306,6 +321,74 @@ mod tests {
                     bg == Color::Reset || bg == crate::tui::theme::resolve("mono").highlight_bg,
                     "mono forced {bg:?} onto cell ({x},{y})"
                 );
+            }
+        }
+    }
+
+    /// Put a frame-loss banner on screen the way a real poll would.
+    fn with_banner(app: &mut App, kind: crate::metrics::AlertKind) {
+        use crate::metrics::alerts::Alert;
+        use std::time::Duration;
+
+        let now = std::time::Instant::now();
+        app.banner = Some(crate::tui::app::Banner {
+            alert: Alert {
+                kind,
+                frames: 12,
+                window: Duration::from_secs(10),
+                at: now,
+            },
+            until: now + Duration::from_secs(30),
+        });
+        app.alert_count = 1;
+    }
+
+    #[test]
+    fn the_alert_banner_is_visible_from_every_view() {
+        // A dropped frame matters whichever tab you happen to be on.
+        for view in View::ALL {
+            let mut app = app();
+            app.view = view;
+            with_banner(&mut app, crate::metrics::AlertKind::NetworkDropped);
+
+            let rendered = render(&mut app, 120, 40);
+            assert!(
+                rendered.contains("DROPPING FRAMES"),
+                "{} hid the banner",
+                view.id()
+            );
+            assert!(
+                rendered.contains("viewers are seeing stutter"),
+                "{}",
+                view.id()
+            );
+        }
+    }
+
+    #[test]
+    fn the_banner_costs_no_rows_when_there_is_nothing_to_report() {
+        let mut quiet = app();
+        let without = render(&mut quiet, 120, 40);
+
+        let mut noisy = app();
+        with_banner(&mut noisy, crate::metrics::AlertKind::NetworkDropped);
+        let with = render(&mut noisy, 120, 40);
+
+        assert!(!without.contains("DROPPING FRAMES"));
+        assert_eq!(
+            without.lines().count(),
+            with.lines().count(),
+            "the frame is a fixed height either way"
+        );
+    }
+
+    #[test]
+    fn the_banner_survives_a_cramped_terminal() {
+        for kind in crate::metrics::AlertKind::ALL {
+            for (width, height) in [(20, 8), (40, 10), (80, 24)] {
+                let mut app = app();
+                with_banner(&mut app, kind);
+                let _ = render(&mut app, width, height);
             }
         }
     }
@@ -373,6 +456,8 @@ mod tests {
                     peaks: vec![0.4, 0.2],
                     ..crate::obs::stats::AudioInput::default()
                 }];
+                // The banner has its own glyphs, so it belongs in this sweep.
+                with_banner(&mut app, crate::metrics::AlertKind::NetworkDropped);
                 // Populate the histories, or the charts and sparklines draw
                 // nothing and this test passes without ever reaching them —
                 // which is exactly where the Unicode glyphs actually live.

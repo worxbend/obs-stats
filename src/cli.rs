@@ -67,6 +67,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_mouse: bool,
 
+    /// Disable frame-loss alerts entirely (banner and notifications).
+    #[arg(long, global = true)]
+    pub no_alerts: bool,
+
+    /// Keep the in-app alert banner but send no desktop notifications.
+    #[arg(long, global = true)]
+    pub no_notify: bool,
+
     /// Write debug logs to this file. Never contains the password.
     #[arg(long, value_name = "PATH", global = true)]
     pub log_file: Option<PathBuf>,
@@ -140,6 +148,12 @@ impl Cli {
         }
         if self.no_mouse {
             config.ui.mouse = false;
+        }
+        if self.no_alerts {
+            config.alerts.enabled = false;
+        }
+        if self.no_notify {
+            config.alerts.desktop = false;
         }
 
         // Re-validate: a flag can push a field out of range just as a file can.
@@ -281,6 +295,19 @@ mod tests {
     fn the_mouse_can_be_disabled() {
         assert!(!resolve(&["--no-mouse"]).unwrap().ui.mouse);
         assert!(resolve(&[]).unwrap().ui.mouse);
+    }
+
+    #[test]
+    fn alerts_can_be_narrowed_or_silenced() {
+        let quiet = resolve(&["--no-notify"]).unwrap();
+        assert!(quiet.alerts.enabled, "the banner should remain");
+        assert!(!quiet.alerts.desktop);
+
+        let silent = resolve(&["--no-alerts"]).unwrap();
+        assert!(!silent.alerts.enabled);
+
+        let default = resolve(&[]).unwrap();
+        assert!(default.alerts.enabled && default.alerts.desktop);
     }
 
     #[test]

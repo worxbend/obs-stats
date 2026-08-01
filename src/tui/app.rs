@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::config::model::{MAX_POLL_INTERVAL_MS, MIN_POLL_INTERVAL_MS};
+use crate::metrics::alerts::{Alert, Severity};
 use crate::metrics::{Snapshot, history_capacity};
 use crate::obs::client::{Command, Update};
 use crate::tui::keys::{Action, Overlay};
@@ -24,6 +25,21 @@ pub struct Toast {
 
 /// How long a toast stays on screen.
 pub const TOAST_DURATION: Duration = Duration::from_secs(3);
+
+/// How long a frame-loss banner stays up.
+///
+/// Longer than a toast because it reports something that needs acting on, and
+/// longest for the ones a viewer can see — but still self-clearing, so a
+/// dashboard left running does not accumulate stale warnings.
+pub const BANNER_DURATION: Duration = Duration::from_secs(20);
+pub const BANNER_DURATION_CRITICAL: Duration = Duration::from_secs(45);
+
+/// An alert currently shown as a banner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Banner {
+    pub alert: Alert,
+    pub until: Instant,
+}
 
 pub struct App {
     pub config: Config,
@@ -58,6 +74,11 @@ pub struct App {
     /// Theme to restore if the picker is cancelled.
     theme_before_preview: &'static Theme,
     pub toast: Option<Toast>,
+    /// The frame-loss banner, if one is showing.
+    pub banner: Option<Banner>,
+    /// Alerts raised this session, newest last. Drives the header counter, so
+    /// a loss that happened while you were on another view is still evident.
+    pub alert_count: u64,
 }
 
 impl App {
@@ -66,8 +87,11 @@ impl App {
         let view = View::from_id(&config.ui.start_view).unwrap_or(View::Overview);
         let capacity = history_capacity(config.ui.history_seconds, config.ui.poll_interval_ms);
 
+        let mut snapshot = Snapshot::new(capacity);
+        snapshot.set_alert_config(config.alerts.to_alert_config());
+
         Self {
-            snapshot: Snapshot::new(capacity),
+            snapshot,
             theme,
             view,
             overlay: Overlay::None,
@@ -83,6 +107,8 @@ impl App {
             theme_cursor: theme::index_of(&config.ui.theme),
             theme_before_preview: theme,
             toast: None,
+            banner: None,
+            alert_count: 0,
             config,
         }
     }
@@ -91,17 +117,49 @@ impl App {
     ///
     /// Ignored while paused, except for connection-state changes: a paused
     /// dashboard that silently hides a dropped connection would be a lie.
-    pub fn apply(&mut self, update: Update, now: Instant) {
+    ///
+    /// Returns any alerts raised, for the shell to hand to the notifier.
+    pub fn apply(&mut self, update: Update, now: Instant) -> Vec<Alert> {
         if self.paused
             && matches!(
                 update,
                 Update::Poll(_) | Update::Inventory(_) | Update::Meters(_)
             )
         {
+            return Vec::new();
+        }
+        let alerts = self.snapshot.apply(update, now);
+        self.clamp_selection();
+
+        for alert in &alerts {
+            self.raise(alert.clone(), now);
+        }
+        alerts
+    }
+
+    /// Show `alert` as a banner, unless something worse is already up.
+    ///
+    /// A render-lag warning must not displace a "viewers are seeing stutter"
+    /// banner that is still on screen.
+    fn raise(&mut self, alert: Alert, now: Instant) {
+        self.alert_count += 1;
+
+        if let Some(current) = &self.banner
+            && now < current.until
+            && current.alert.severity() > alert.severity()
+        {
             return;
         }
-        self.snapshot.apply(update, now);
-        self.clamp_selection();
+
+        let duration = if alert.severity() == Severity::Critical {
+            BANNER_DURATION_CRITICAL
+        } else {
+            BANNER_DURATION
+        };
+        self.banner = Some(Banner {
+            until: now + duration,
+            alert,
+        });
     }
 
     /// Apply an action, returning a command for the OBS task if one is due.
@@ -219,6 +277,11 @@ impl App {
             && now >= toast.until
         {
             self.toast = None;
+        }
+        if let Some(banner) = &self.banner
+            && now >= banner.until
+        {
+            self.banner = None;
         }
     }
 

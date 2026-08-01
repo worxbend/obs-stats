@@ -148,6 +148,65 @@ first.
 Note that a **muted** input always shows an empty meter, whatever its level —
 that is deliberate, so mute state is never ambiguous.
 
+## I am not getting desktop notifications
+
+Check what `obs-stats` sees:
+
+```sh
+cargo run --example notification_check
+```
+
+It reports whether a session bus was found, whether the notifier started, and
+sends one notification of each severity.
+
+**"No session bus was found"** — there is no desktop to notify. Normal on a bare
+TTY, over ssh, or inside a container. Alerts still appear in the dashboard.
+
+**The notifier starts but nothing appears** — your notification daemon is not
+running, or do-not-disturb is on. Confirm a daemon is listening:
+
+```sh
+gdbus call --session --dest org.freedesktop.Notifications \
+  --object-path /org/freedesktop/Notifications \
+  --method org.freedesktop.Notifications.GetServerInformation
+```
+
+That should name your daemon. If it errors, nothing on your desktop is
+handling notifications.
+
+**They stopped part-way through a session** — after three consecutive delivery
+failures `obs-stats` gives up for the session rather than retrying forever. Run
+with `--log-file` to see the failures.
+
+Notifications are Linux-only. On macOS and Windows alerts appear in the
+dashboard only.
+
+## I am getting too many alerts
+
+Raise the threshold rather than turning them off — a machine that always skips a
+few render frames is better served by a higher bar:
+
+```yaml
+alerts:
+  min_frames: 10
+  cooldown_seconds: 300
+```
+
+Or narrow them: `--no-notify` keeps the banner and stops the desktop popups.
+See [alerts.md](alerts.md) for the full set of knobs.
+
+## Alerts never fire even though frames are being dropped
+
+Alerts are about frames lost *recently*, not the totals in the panels. A
+counter reading 400 dropped frames from an hour ago will not alert; only new
+losses do.
+
+They also require an output to be running — the renderer can skip while OBS
+sits idle, and nobody is watching then.
+
+To confirm the machinery works, set `min_frames: 1` and `cooldown_seconds: 0`
+temporarily.
+
 ## The terminal is left broken after a crash
 
 It should not be: `obs-stats` installs a panic hook that restores the terminal

@@ -8,6 +8,7 @@
 
 use std::time::{Duration, Instant};
 
+use crate::metrics::alerts::{Alert, AlertConfig, Counters, Watcher};
 use crate::metrics::history::History;
 use crate::obs::client::{Inventory, LogLevel, PollData, Update};
 use crate::obs::stats::{
@@ -173,6 +174,9 @@ pub struct Snapshot {
     /// When the most recent poll landed.
     pub last_poll: Option<Instant>,
 
+    /// Raises alerts when frames are actively being lost.
+    alerts: Watcher,
+
     started: Instant,
     stream_baseline: Option<Baseline>,
     stream_mark: Option<ByteMark>,
@@ -201,6 +205,7 @@ impl Snapshot {
             log: Vec::new(),
             polls: 0,
             last_poll: None,
+            alerts: Watcher::new(AlertConfig::default()),
             started: Instant::now(),
             stream_baseline: None,
             stream_mark: None,
@@ -208,8 +213,16 @@ impl Snapshot {
         }
     }
 
+    /// Replace the alert thresholds.
+    pub fn set_alert_config(&mut self, config: AlertConfig) {
+        self.alerts.set_config(config);
+    }
+
     /// Fold one [`Update`] from the session task into the model.
-    pub fn apply(&mut self, update: Update, now: Instant) {
+    ///
+    /// Returns any alerts the update raised, so the shell can forward them to
+    /// the desktop notifier. They are already recorded in [`Snapshot::log`].
+    pub fn apply(&mut self, update: Update, now: Instant) -> Vec<Alert> {
         match update {
             Update::Connecting { attempt } => {
                 self.connection = ConnectionState::Connecting { attempt };
@@ -230,7 +243,7 @@ impl Snapshot {
                     self.push_log(LogLevel::Info, "connected to OBS".to_string(), now);
                 }
             }
-            Update::Poll(poll) => self.apply_poll(*poll, now),
+            Update::Poll(poll) => return self.apply_poll(*poll, now),
             Update::Inventory(inventory) => self.apply_inventory(*inventory),
             Update::Meters(levels) => self.apply_meters(&levels),
             Update::Event { level, message } => self.push_log(level, message, now),
@@ -255,9 +268,11 @@ impl Snapshot {
                 self.on_connection_lost();
             }
         }
+
+        Vec::new()
     }
 
-    fn apply_poll(&mut self, poll: PollData, now: Instant) {
+    fn apply_poll(&mut self, poll: PollData, now: Instant) -> Vec<Alert> {
         let stream_was_active = self.stream.active;
         let record_was_active = self.record.active;
 
@@ -314,6 +329,39 @@ impl Snapshot {
         self.history
             .output_skips
             .push(self.session_output_skipped() as f64);
+
+        // Fed after the counters land so the watcher sees the same numbers the
+        // panels do, including the per-stream baselines.
+        let alerts = self.alerts.observe(
+            Counters {
+                render_skipped: self.stats.render_skipped_frames,
+                output_skipped: self.stats.output_skipped_frames,
+                network_dropped: self.stream.skipped_frames,
+                outputting: self.stream.active || self.record.active,
+                reconnecting: self.stream.reconnecting,
+            },
+            now,
+        );
+
+        // Every alert also becomes a log line, so the Log view is a complete
+        // record even for alerts whose banner has already expired.
+        for alert in &alerts {
+            let level = match alert.severity() {
+                crate::metrics::alerts::Severity::Critical => LogLevel::Error,
+                crate::metrics::alerts::Severity::Warning => LogLevel::Warn,
+            };
+            self.push_log(
+                level,
+                format!(
+                    "{}: {}",
+                    alert.kind.label().to_ascii_lowercase(),
+                    alert.summary()
+                ),
+                now,
+            );
+        }
+
+        alerts
     }
 
     fn apply_inventory(&mut self, inventory: Inventory) {
@@ -1030,6 +1078,105 @@ mod tests {
         );
         assert_eq!(snapshot.version.obs_version, "30.2.3");
         assert_eq!(snapshot.version.websocket_version, "5.5.0");
+    }
+
+    #[test]
+    fn sustained_network_loss_raises_an_alert_and_logs_it() {
+        use crate::metrics::alerts::AlertKind;
+
+        let mut snapshot = Snapshot::new(32);
+        let start = Instant::now();
+        let dropping = |dropped| StreamStatus {
+            active: true,
+            skipped_frames: dropped,
+            total_frames: 1000,
+            ..StreamStatus::default()
+        };
+
+        // Baseline, then a clean poll: nothing to say.
+        assert!(
+            snapshot
+                .apply(
+                    poll(Stats::default(), dropping(0), RecordStatus::default()),
+                    start
+                )
+                .is_empty()
+        );
+        assert!(
+            snapshot
+                .apply(
+                    poll(Stats::default(), dropping(0), RecordStatus::default()),
+                    start + Duration::from_secs(1)
+                )
+                .is_empty()
+        );
+
+        let alerts = snapshot.apply(
+            poll(Stats::default(), dropping(9), RecordStatus::default()),
+            start + Duration::from_secs(2),
+        );
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].kind, AlertKind::NetworkDropped);
+        assert_eq!(alerts[0].frames, 9);
+
+        // And it is durable: the Log view still shows it after the banner goes.
+        let logged = snapshot.log.last().expect("alert should be logged");
+        assert_eq!(logged.level, LogLevel::Error);
+        assert!(
+            logged.message.contains("dropping frames"),
+            "{}",
+            logged.message
+        );
+    }
+
+    #[test]
+    fn an_idle_obs_never_raises_frame_alerts() {
+        let mut snapshot = Snapshot::new(32);
+        let start = Instant::now();
+        let idle = |renderer| {
+            poll(
+                Stats {
+                    render_skipped_frames: renderer,
+                    ..Stats::default()
+                },
+                StreamStatus::default(),
+                RecordStatus::default(),
+            )
+        };
+        snapshot.apply(idle(0), start);
+        assert!(
+            snapshot
+                .apply(idle(500), start + Duration::from_secs(1))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn alert_thresholds_can_be_reconfigured() {
+        let mut snapshot = Snapshot::new(32);
+        snapshot.set_alert_config(crate::metrics::AlertConfig {
+            enabled: false,
+            ..crate::metrics::AlertConfig::default()
+        });
+
+        let start = Instant::now();
+        let dropping = |dropped| StreamStatus {
+            active: true,
+            skipped_frames: dropped,
+            ..StreamStatus::default()
+        };
+        snapshot.apply(
+            poll(Stats::default(), dropping(0), RecordStatus::default()),
+            start,
+        );
+        assert!(
+            snapshot
+                .apply(
+                    poll(Stats::default(), dropping(100), RecordStatus::default()),
+                    start + Duration::from_secs(1)
+                )
+                .is_empty()
+        );
     }
 
     #[test]

@@ -63,6 +63,19 @@ That also reports whether the password variable is set, without printing it.
 Unknown keys are an error rather than being silently ignored, so a typo like
 `thmee:` is reported at startup instead of quietly doing nothing.
 
+### `alerts`
+
+Frame-loss detection and desktop notifications. See [alerts.md](alerts.md) for
+what triggers one and how to tune it.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `true` | Detect frame loss at all. Turning this off also silences notifications. |
+| `desktop` | bool | `true` | Send a desktop notification as well as the in-app banner. Linux only; skipped when there is no session bus. |
+| `min_frames` | u64 | `3` | Frames that must be lost within the window before alerting. `0` is treated as `1`. |
+| `window_seconds` | 1–600 | `10` | How far back to count losses. |
+| `cooldown_seconds` | 0–3600 | `60` | Minimum gap between two alerts about the same cause. |
+
 ## Command-line flags
 
 Every flag is global — it works with or without a subcommand.
@@ -78,6 +91,8 @@ Every flag is global — it works with or without a subcommand.
 | `--view <id>` | `ui.start_view` |
 | `--ascii` | Sets `ui.unicode: false` and `ui.show_icons: false` |
 | `--no-mouse` | Sets `ui.mouse: false` |
+| `--no-alerts` | Sets `alerts.enabled: false` |
+| `--no-notify` | Sets `alerts.desktop: false` |
 | `--log-file <path>` | Enables debug logging to that file |
 
 A bad `--theme` or `--view` fails at startup with the list of valid values,

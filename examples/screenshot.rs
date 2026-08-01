@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use obs_stats::config::Config;
 use obs_stats::metrics::Snapshot;
+use obs_stats::metrics::alerts::{Alert, AlertKind};
 use obs_stats::obs::client::{LogLevel, Update};
 use obs_stats::obs::stats::{
     AudioInput, RecordStatus, Scene, SceneList, Stats, StreamStatus, Version, VideoSettings,
@@ -61,6 +62,8 @@ struct Shot {
     view: View,
     overlay: Overlay,
     theme: &'static str,
+    /// Show a frame-loss banner, for the alerts documentation.
+    alert: Option<AlertKind>,
 }
 
 const SHOTS: &[Shot] = &[
@@ -69,48 +72,63 @@ const SHOTS: &[Shot] = &[
         view: View::Overview,
         overlay: Overlay::None,
         theme: "claude",
+        alert: None,
     },
     Shot {
         name: "performance",
         view: View::Performance,
         overlay: Overlay::None,
         theme: "claude",
+        alert: None,
     },
     Shot {
         name: "stream",
         view: View::Stream,
         overlay: Overlay::None,
         theme: "tokyo-night",
+        alert: None,
     },
     Shot {
         name: "scenes",
         view: View::Scenes,
         overlay: Overlay::None,
         theme: "nord",
+        alert: None,
     },
     Shot {
         name: "audio",
         view: View::Audio,
         overlay: Overlay::None,
         theme: "gruvbox",
+        alert: None,
     },
     Shot {
         name: "log",
         view: View::Log,
         overlay: Overlay::None,
         theme: "catppuccin-mocha",
+        alert: None,
     },
     Shot {
         name: "themes",
         view: View::Overview,
         overlay: Overlay::Themes,
         theme: "dracula",
+        alert: None,
     },
     Shot {
         name: "help",
         view: View::Overview,
         overlay: Overlay::Help,
         theme: "claude",
+        alert: None,
+    },
+    Shot {
+        name: "alert",
+        view: View::Stream,
+        overlay: Overlay::None,
+        theme: "claude",
+        alert: Some(AlertKind::NetworkDropped),
     },
 ];
 
@@ -179,6 +197,22 @@ fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
     // the screenshots produces byte-identical output.
     app.frame = 3;
     app.version = SHOWN_VERSION.to_string();
+
+    if let Some(kind) = shot.alert {
+        // A fixed instant far in the future keeps the banner up without
+        // depending on when the generator happens to run.
+        let at = Instant::now();
+        app.banner = Some(obs_stats::tui::app::Banner {
+            alert: Alert {
+                kind,
+                frames: 14,
+                window: Duration::from_secs(10),
+                at,
+            },
+            until: at + Duration::from_secs(3600),
+        });
+        app.alert_count = 2;
+    }
 
     let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
     terminal

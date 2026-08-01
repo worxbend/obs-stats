@@ -26,6 +26,7 @@ pub const MAX_PASSWORD_LENGTH: usize = 512;
 pub struct Config {
     pub connection: ConnectionConfig,
     pub ui: UiConfig,
+    pub alerts: AlertsConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -97,6 +98,50 @@ impl Default for UiConfig {
     }
 }
 
+/// Bounds on the alert thresholds.
+pub const MIN_ALERT_WINDOW_SECONDS: u64 = 1;
+pub const MAX_ALERT_WINDOW_SECONDS: u64 = 600;
+pub const MAX_ALERT_COOLDOWN_SECONDS: u64 = 3600;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AlertsConfig {
+    /// Detect frame loss at all. Turning this off also silences notifications.
+    pub enabled: bool,
+    /// Send a desktop notification as well as showing the in-app banner.
+    pub desktop: bool,
+    /// Frames that must be lost within the window before alerting.
+    pub min_frames: u64,
+    /// How far back to count losses, in seconds.
+    pub window_seconds: u64,
+    /// Minimum gap between two alerts about the same cause, in seconds.
+    pub cooldown_seconds: u64,
+}
+
+impl Default for AlertsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            desktop: true,
+            min_frames: 3,
+            window_seconds: 10,
+            cooldown_seconds: 60,
+        }
+    }
+}
+
+impl AlertsConfig {
+    /// The runtime form used by the detector.
+    pub fn to_alert_config(&self) -> crate::metrics::AlertConfig {
+        crate::metrics::AlertConfig {
+            enabled: self.enabled,
+            min_frames: self.min_frames,
+            window: std::time::Duration::from_secs(self.window_seconds),
+            cooldown: std::time::Duration::from_secs(self.cooldown_seconds),
+        }
+    }
+}
+
 impl Config {
     /// Check every invariant the rest of the program relies on.
     ///
@@ -162,6 +207,18 @@ impl Config {
             return Err(Error::ConfigInvalid(format!(
                 "ui.start_view '{}' is not a known view",
                 ui.start_view
+            )));
+        }
+
+        let alerts = &self.alerts;
+        if !(MIN_ALERT_WINDOW_SECONDS..=MAX_ALERT_WINDOW_SECONDS).contains(&alerts.window_seconds) {
+            return Err(Error::ConfigInvalid(format!(
+                "alerts.window_seconds must be between {MIN_ALERT_WINDOW_SECONDS} and {MAX_ALERT_WINDOW_SECONDS}"
+            )));
+        }
+        if alerts.cooldown_seconds > MAX_ALERT_COOLDOWN_SECONDS {
+            return Err(Error::ConfigInvalid(format!(
+                "alerts.cooldown_seconds must be at most {MAX_ALERT_COOLDOWN_SECONDS}"
             )));
         }
 
@@ -264,6 +321,40 @@ mod tests {
         assert!(invalid(|c| c.ui.poll_interval_ms = 120_000).contains("poll_interval_ms"));
         assert!(invalid(|c| c.ui.history_seconds = 1).contains("history_seconds"));
         assert!(invalid(|c| c.ui.history_seconds = 99_999).contains("history_seconds"));
+    }
+
+    #[test]
+    fn alert_defaults_are_conservative() {
+        let alerts = AlertsConfig::default();
+        assert!(alerts.enabled && alerts.desktop);
+        // One lost frame is background noise on many systems; three within ten
+        // seconds is a real problem.
+        assert_eq!(alerts.min_frames, 3);
+        assert_eq!(alerts.window_seconds, 10);
+        assert_eq!(alerts.cooldown_seconds, 60);
+    }
+
+    #[test]
+    fn alert_config_converts_to_its_runtime_form() {
+        let runtime = AlertsConfig::default().to_alert_config();
+        assert!(runtime.enabled);
+        assert_eq!(runtime.min_frames, 3);
+        assert_eq!(runtime.window, std::time::Duration::from_secs(10));
+        assert_eq!(runtime.cooldown, std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn rejects_out_of_range_alert_thresholds() {
+        assert!(invalid(|c| c.alerts.window_seconds = 0).contains("window_seconds"));
+        assert!(invalid(|c| c.alerts.window_seconds = 99_999).contains("window_seconds"));
+        assert!(invalid(|c| c.alerts.cooldown_seconds = 99_999).contains("cooldown_seconds"));
+    }
+
+    #[test]
+    fn a_zero_cooldown_is_allowed_for_testing_alerts() {
+        let mut config = Config::default();
+        config.alerts.cooldown_seconds = 0;
+        config.validate().expect("no cooldown is a valid choice");
     }
 
     #[test]

@@ -53,3 +53,32 @@ ui:
 
   # View focused at startup: overview, performance, stream, scenes, audio, log
   start_view: overview
+
+alerts:
+  # Watch for frames being lost and raise an alert when they are.
+  #
+  # This is deliberately about *rate*, not totals: a stream that dropped forty
+  # frames an hour ago and none since is healthy, so alerts fire on frames lost
+  # within a rolling window rather than on the counters you see in the panels.
+  enabled: true
+
+  # Also send a desktop notification (Linux, via D-Bus). The in-app banner
+  # shows either way. Set to false if you only want the banner.
+  #
+  # Notifications are skipped automatically when there is no session bus —
+  # a bare TTY, over ssh, or inside a container. Test yours with:
+  #   cargo run --example notification_check
+  desktop: true
+
+  # Frames that must be lost within the window before alerting. One lost frame
+  # in a 60fps stream is invisible and is constant on some systems; alerting on
+  # it would just train you to ignore the alert.
+  min_frames: 3
+
+  # How far back to count losses, in seconds. Range: 1–600.
+  window_seconds: 10
+
+  # Minimum gap between two alerts about the same cause, in seconds, so a
+  # sustained problem does not produce a notification every second.
+  # Range: 0–3600.
+  cooldown_seconds: 60

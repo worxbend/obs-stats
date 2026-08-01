@@ -151,6 +151,13 @@ setting, not a measurement — an input can sit at +0.0 dB and still be silent.
 Only audio-bearing inputs are listed. Image, colour and text sources are
 filtered out; metering them would fill the panel with permanent silence.
 
+## Being told, rather than watching
+
+Everything above assumes you are looking at the dashboard. You usually are not
+— you are presenting. [alerts.md](alerts.md) covers the banner and desktop
+notification that fire when frames actually start being lost, and how to tune
+the thresholds.
+
 ## When the dashboard is stale
 
 If OBS stops answering, the numbers freeze at their last values. The connection

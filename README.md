@@ -32,6 +32,7 @@ OBS's own stats dock tells you *that* frames were dropped. It does not tell you 
 | 📊 **Six focused dashboards** | Overview, frame pacing, outputs, scenes, audio meters, and an event log — one keypress apart. |
 | 🩺 **A real verdict** | `HEALTHY` / `STRAINED` / `DROPPING`, derived from drop rates, congestion, frame budget and FPS against target — not a single number. |
 | 🎯 **Three loss channels, kept apart** | Renderer skips (your GPU), encoder skips (your CPU/encoder), network drops (your uplink). Different causes, different fixes. |
+| 🔔 **Alerts when it matters** | Frames actually being lost raise a dashboard banner *and* a Linux desktop notification — naming the cause, the count, and the fix. |
 | ⏱️ **Per-stream counters** | Drops are measured from the moment the stream started, not since OBS launched — so yesterday's numbers don't hide today's problem. |
 | 🎨 **24 built-in themes** | A btop-style live picker that restyles the whole UI as you move, with `Enter` to keep and `Esc` to revert. |
 | ⌨️ **Keyboard-first** | Vim keys or arrows, digits to jump, mouse optional. Everything reachable without a menu. |
@@ -132,6 +133,42 @@ Every audio-bearing input with its fader position and a live peak meter. Meters 
 Scene switches, output state changes, mute toggles and source changes, timestamped relative to when `obs-stats` started — so "how long before the drop did the scene change?" is a subtraction you don't have to do.
 
 <img src="docs/images/log.svg" alt="Log view listing timestamped OBS events" width="880">
+
+---
+
+## 🔔 Alerts
+
+Frames being lost is the thing you most need to know about and least likely to
+be looking at the terminal for. So `obs-stats` raises a banner across every
+view **and** sends a Linux desktop notification.
+
+<img src="docs/images/alert.svg" alt="The dashboard with a red DROPPING FRAMES banner naming the count, the consequence and the remedy" width="880">
+
+Alerts are about **rate**, not totals — a stream that dropped forty frames an
+hour ago and none since is healthy. One fires when enough frames are lost
+within a rolling window, with a threshold, a cooldown, and only while an output
+is actually running.
+
+| Alert | Cause | Severity |
+|---|---|---|
+| `DROPPING FRAMES` | Network could not deliver encoded frames | Critical |
+| `RECONNECTING` | The stream dropped | Critical |
+| `ENCODER LAG` | Encoder could not keep up | Warning |
+| `RENDER LAG` | Renderer could not build frames in time | Warning |
+
+Notifications speak D-Bus directly with a pure-Rust client — nothing to
+install, nothing extra linked, and they are skipped automatically when there is
+no session bus (a TTY, ssh, a container). Delivery runs on its own thread, so a
+wedged notification daemon can never stall a frame.
+
+```sh
+obs-stats --no-notify     # keep the banner, skip the desktop
+obs-stats --no-alerts     # turn the whole thing off
+
+cargo run --example notification_check   # test your desktop's notifications
+```
+
+Full detail, including tuning: [docs/alerts.md](docs/alerts.md).
 
 ---
 
@@ -265,13 +302,14 @@ One background task owns the socket. It reconnects on its own with backoff, poll
 
 Polling is split by cost. Every tick sends one batched request for `GetStats` + `GetStreamStatus` + `GetRecordStatus`. Every tenth tick adds scenes, inputs, profiles, collections and video settings — things that change on human timescales. Audio levels arrive as `InputVolumeMeters` events rather than being polled at all.
 
-The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 361 tests, no live OBS required.
+The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 411 tests, no live OBS required.
 
 ---
 
 ## 📚 Documentation
 
 - [Configuration reference](docs/configuration.md)
+- [Frame-loss alerts and notifications](docs/alerts.md)
 - [Reading the metrics](docs/metrics.md) — what each number means and what to do about it
 - [Key bindings](docs/keybindings.md)
 - [Themes](docs/themes.md)
@@ -282,7 +320,7 @@ The layers are separable and separately tested: `obs` (protocol) → `metrics` (
 ## 🛠️ Development
 
 ```sh
-cargo test                                  # 361 tests, no OBS needed
+cargo test                                  # 411 tests, no OBS needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run --example screenshot -- --demo    # regenerate docs/images/*.svg

@@ -15,6 +15,7 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod metrics;
+pub mod notify;
 pub mod obs;
 pub mod probe;
 pub mod tui;

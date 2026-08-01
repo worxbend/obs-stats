@@ -132,6 +132,22 @@ fn status(app: &App) -> Line<'static> {
         spans.push(dot(theme, app.unicode));
     }
 
+    // Count of everything raised this session. The banner expires, but the
+    // fact that frames were lost should not disappear with it.
+    if app.alert_count > 0 {
+        spans.push(Span::styled(
+            format!(
+                "{} {}",
+                if app.unicode { "▲" } else { "!" },
+                app.alert_count
+            ),
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(dot(theme, app.unicode));
+    }
+
     spans.extend(connection_chip(
         &snapshot.connection,
         snapshot,
@@ -308,6 +324,20 @@ mod tests {
             ..RecordStatus::default()
         };
         assert!(text(&status(&app)).contains("REC PAUSED"));
+    }
+
+    #[test]
+    fn raised_alerts_leave_a_counter_in_the_header() {
+        let mut app = app();
+        assert!(!text(&status(&app)).contains('▲'));
+
+        app.alert_count = 3;
+        let rendered = text(&status(&app));
+        assert!(rendered.contains("▲ 3"), "{rendered}");
+
+        // And the ASCII form avoids the glyph.
+        app.unicode = false;
+        assert!(text(&status(&app)).contains("! 3"));
     }
 
     #[test]
