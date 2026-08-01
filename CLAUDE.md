@@ -77,7 +77,13 @@ Regenerate with `--demo` (synthetic data). Without the flag it uses a live OBS
 if one answers, which is useful for eyeballing but not for committing.
 
 `--text` dumps the layouts as plain text, which is the fastest way to check a
-layout change.
+layout change; add `--ascii` to inspect the fallback rendering.
+
+Note that ratatui's `Chart` and `Sparkline` have no ASCII mode — their axes are
+box-drawing and their series braille or block elements — so `views::ascii_plot`
+and `views::ascii_bars` stand in for them. A rendering test walks every view ×
+overlay in ASCII mode and fails on any Arrows / Box Drawing / Block Elements /
+Geometric Shapes / emoji codepoint, so this cannot silently regress.
 
 ## Things that are deliberate
 

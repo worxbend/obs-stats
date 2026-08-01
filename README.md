@@ -287,6 +287,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run --example screenshot -- --demo    # regenerate docs/images/*.svg
 cargo run --example screenshot -- --demo --text   # dump layouts as plain text
+cargo run --example screenshot -- --demo --text --ascii   # ...in ASCII mode
 ```
 
 ---
