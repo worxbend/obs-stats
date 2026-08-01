@@ -1,0 +1,55 @@
+# obs-stats configuration
+#
+# Location: ~/.config/obs-stats/config.yml  (override with $OBS_STATS_CONFIG)
+# Generate this file with:  obs-stats init
+#
+# Every key below is optional — delete anything you are happy with the default
+# for. An empty file is a valid config that connects to a stock local OBS.
+
+connection:
+  # Host running obs-websocket. Use the machine's LAN address to watch a
+  # remote OBS; IPv6 literals may be written bare (`::1`) or bracketed.
+  host: 127.0.0.1
+
+  # Port from OBS → Tools → WebSocket Server Settings.
+  port: 4455
+
+  # Name of the environment variable holding the OBS WebSocket password.
+  #
+  # The password itself is never stored here, so this file stays safe to
+  # commit and to paste into a bug report. Set it in your shell:
+  #
+  #   export OBS_WEBSOCKET_PASSWORD='...'
+  #
+  # Leave the value empty ("") if your OBS has authentication disabled.
+  password_env: OBS_WEBSOCKET_PASSWORD
+
+  # How long to wait for the TCP connection and handshake, in milliseconds.
+  connect_timeout_ms: 3000
+
+ui:
+  # Built-in theme id. Run `obs-stats themes` to list them all, or press F2
+  # in the app to preview and switch themes live.
+  theme: claude
+
+  # How often the hot metrics (CPU, FPS, frame times, output status) are
+  # polled, in milliseconds. Range: 100–60000. Scenes, inputs and profiles
+  # refresh at a tenth of this rate, since they change far less often.
+  poll_interval_ms: 1000
+
+  # How much history the sparklines and charts retain, in seconds.
+  # Range: 10–3600.
+  history_seconds: 120
+
+  # Draw Unicode block glyphs, braille charts and rounded borders.
+  # Set to false on a Linux VT or any terminal without a Unicode font.
+  unicode: true
+
+  # Show the icon column in panel titles and tables.
+  show_icons: true
+
+  # Enable mouse support: click a tab to switch, scroll to move a selection.
+  mouse: true
+
+  # View focused at startup: overview, performance, stream, scenes, audio, log
+  start_view: overview

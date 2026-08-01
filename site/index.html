@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>obs-stats — a btop-style terminal dashboard for OBS Studio</title>
+<meta name="description" content="A btop-style terminal dashboard for OBS Studio. Watch CPU, frame pacing, encoder health, outputs, scenes and audio live over obs-websocket 5.x. One static Rust binary.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231B1916'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23D97757' font-family='monospace'>▤</text></svg>">
+<meta property="og:title" content="obs-stats">
+<meta property="og:description" content="A btop-style terminal dashboard for OBS Studio.">
+<meta property="og:type" content="website">
+<style>
+:root {
+  --bg: #14120F;
+  --bg-soft: #1B1916;
+  --bg-card: #201D19;
+  --fg: #ECE8E1;
+  --muted: #9A958A;
+  --border: #322E28;
+  --accent: #D97757;
+  --accent-soft: #E8C59E;
+  --success: #87B37B;
+  --warning: #E0B44C;
+  --danger: #E06C5F;
+  --info: #7BA9C7;
+  --radius: 12px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #FBF9F6;
+    --bg-soft: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --fg: #23201C;
+    --muted: #6B655C;
+    --border: #E4DED4;
+    --accent: #B8552F;
+    --accent-soft: #8A6033;
+    --success: #4E7A42;
+    --warning: #97701A;
+    --danger: #A93E33;
+    --info: #3C6F8C;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { width: min(1080px, calc(100% - 3rem)); margin-inline: auto; }
+
+/* ---------- header ---------- */
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.9rem 0;
+  flex-wrap: wrap;
+}
+
+.brand {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--fg);
+  margin-right: auto;
+}
+.brand span { color: var(--accent); }
+
+.nav a.link { color: var(--muted); font-size: 0.94rem; }
+.nav a.link:hover { color: var(--fg); text-decoration: none; }
+
+/* ---------- hero ---------- */
+
+.hero { padding: 4.5rem 0 2rem; text-align: center; }
+
+h1 {
+  font-family: var(--mono);
+  font-size: clamp(2.4rem, 7vw, 3.9rem);
+  line-height: 1.05;
+  margin: 0 0 1rem;
+  letter-spacing: -0.03em;
+}
+h1 span { color: var(--accent); }
+
+.tagline {
+  font-size: clamp(1.05rem, 2.4vw, 1.32rem);
+  color: var(--fg);
+  max-width: 40ch;
+  margin: 0 auto 0.9rem;
+  font-weight: 500;
+}
+
+.sub {
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 auto 2rem;
+}
+
+.badges {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.badge {
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  border-radius: 999px;
+  padding: 0.22rem 0.8rem;
+  color: var(--muted);
+}
+.badge b { color: var(--accent); font-weight: 600; }
+
+.cta { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; }
+
+.btn {
+  display: inline-block;
+  padding: 0.62rem 1.4rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  border: 1px solid var(--border);
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+.btn:hover { text-decoration: none; transform: translateY(-1px); }
+.btn-primary { background: var(--accent); color: #1B1916; border-color: var(--accent); }
+.btn-ghost { color: var(--fg); background: var(--bg-soft); }
+.btn-ghost:hover { border-color: var(--accent); }
+
+/* ---------- install snippet ---------- */
+
+.install {
+  margin: 2.4rem auto 0;
+  max-width: 720px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  text-align: left;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.install .p { color: var(--success); user-select: none; }
+.install .c { color: var(--muted); }
+
+/* ---------- shot ---------- */
+
+figure { margin: 0; }
+
+.shot {
+  margin: 3rem 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-soft);
+  box-shadow: 0 18px 44px -22px rgba(0,0,0,0.65);
+}
+.shot img { display: block; width: 100%; height: auto; }
+
+figcaption {
+  color: var(--muted);
+  font-size: 0.87rem;
+  text-align: center;
+  margin-top: 0.7rem;
+}
+
+/* ---------- sections ---------- */
+
+section { padding: 3.4rem 0; border-top: 1px solid var(--border); }
+section:first-of-type { border-top: none; }
+
+h2 {
+  font-family: var(--mono);
+  font-size: clamp(1.4rem, 3.4vw, 1.85rem);
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
+}
+.lede { color: var(--muted); max-width: 66ch; margin: 0 0 2rem; }
+
+/* ---------- feature grid ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem 1.3rem;
+}
+.card h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+}
+.card p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+.card .icon { font-size: 1.2rem; display: block; margin-bottom: 0.5rem; }
+
+/* ---------- verdict chips ---------- */
+
+.verdicts { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1.6rem 0 0; }
+.verdict {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid;
+}
+.v-ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 45%, transparent); }
+.v-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+.v-bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+
+/* ---------- views ---------- */
+
+.view { margin-bottom: 3rem; }
+.view:last-child { margin-bottom: 0; }
+
+.view-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+  flex-wrap: wrap;
+}
+.view-head h3 { font-family: var(--mono); font-size: 1.12rem; margin: 0; }
+kbd {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0.08rem 0.42rem;
+  color: var(--accent);
+}
+.view p { color: var(--muted); margin: 0 0 1rem; max-width: 70ch; font-size: 0.94rem; }
+
+/* ---------- keys table ---------- */
+
+table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+th, td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; }
+td:first-child { width: 34%; }
+tbody tr:last-child td { border-bottom: none; }
+
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 2.4rem; }
+
+/* ---------- theme swatches ---------- */
+
+.themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.55rem;
+  margin-top: 1.6rem;
+}
+.theme {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.sw { display: flex; border-radius: 3px; overflow: hidden; flex: none; }
+.sw i { width: 9px; height: 17px; display: block; }
+
+/* ---------- footer ---------- */
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 2.4rem 0 3.2rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.footer-row { display: flex; gap: 1.4rem; flex-wrap: wrap; align-items: center; }
+.footer-row .sep { margin-left: auto; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.06em 0.36em;
+}
+
+@media (max-width: 640px) {
+  .install { white-space: pre-wrap; word-break: break-all; }
+  td:first-child { width: 42%; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <nav class="nav wrap">
+    <a class="brand" href="#top">obs<span>-</span>stats</a>
+    <a class="link" href="#views">Views</a>
+    <a class="link" href="#metrics">Metrics</a>
+    <a class="link" href="#keys">Keys</a>
+    <a class="link" href="#themes">Themes</a>
+    <a class="link" href="https://github.com/worxbend/obs-stats">GitHub&nbsp;↗</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<div class="wrap hero">
+  <h1>obs<span>-</span>stats</h1>
+  <p class="tagline">A btop-style terminal dashboard for OBS&nbsp;Studio.</p>
+  <p class="sub">
+    Watch CPU, frame pacing, encoder health, outputs, scenes and audio — live, from a
+    terminal, over obs-websocket&nbsp;5.x. One static Rust binary. No daemon.
+  </p>
+
+  <div class="badges">
+    <span class="badge"><b>Rust</b> 2024</span>
+    <span class="badge"><b>ratatui</b> + crossterm</span>
+    <span class="badge"><b>obs-websocket</b> 5.x</span>
+    <span class="badge"><b>24</b> themes</span>
+    <span class="badge"><b>MIT</b> licensed</span>
+  </div>
+
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/worxbend/obs-stats/releases/latest">Download</a>
+    <a class="btn btn-ghost" href="https://github.com/worxbend/obs-stats">Source</a>
+    <a class="btn btn-ghost" href="https://github.com/worxbend/obs-stats/blob/main/docs/configuration.md">Docs</a>
+  </div>
+
+  <div class="install">
+<span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/worxbend/obs-stats/main/scripts/install.sh | sh
+<span class="p">$</span> export OBS_WEBSOCKET_PASSWORD=<span class="c">'…'</span>
+<span class="p">$</span> obs-stats
+  </div>
+
+  <figure class="shot">
+    <img src="images/overview.svg" alt="The obs-stats overview dashboard: system, video and health cards above live stream and recording panels, with a stream bitrate chart along the bottom" width="1132" height="708" loading="eager">
+  </figure>
+  <figcaption>The Overview deck. Screenshots on this page are rendered by the app itself, with representative sample data.</figcaption>
+</div>
+
+<section id="why">
+  <div class="wrap">
+    <h2>Why not just the OBS stats dock?</h2>
+    <p class="lede">
+      OBS tells you <em>that</em> frames were dropped. It does not tell you which pipeline
+      dropped them, whether it started five minutes ago, or whether the cause was your GPU,
+      your encoder, or your uplink. Those have different fixes.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <span class="icon" style="color:var(--accent)">◈</span>
+        <h3>Three loss channels, kept apart</h3>
+        <p>Renderer skips are a GPU problem. Encoder skips are a CPU problem. Network drops are an uplink problem. They are never merged into one number.</p>
+      </div>
+      <div class="card">
+        <span class="icon" style="color:var(--info)">◷</span>
+        <h3>Counted per stream</h3>
+        <p>OBS reports totals since it launched. obs-stats captures a baseline when you go live, so yesterday's numbers can't hide today's problem.</p>
+      </div>
+      <div class="card">
+        <span class="icon" style="color:var(--warning)">▲</span>
+        <h3>Warning before loss</h3>
+        <p>Frame render time against the frame budget, and encoder congestion, both move <em>before</em> anything is dropped — which is the moment to act.</p>
+      </div>
+      <div class="card">
+        <span class="icon" style="color:var(--success)">●</span>
+        <h3>A verdict, not a number</h3>
+        <p>Drop rates, congestion, frame budget and FPS-against-target reduce to one word you can read from across the room.</p>
+      </div>
+      <div class="card">
+        <span class="icon" style="color:var(--accent-soft)">♪</span>
+        <h3>Meters that mean something</h3>
+        <p>Audio drawn on a dB scale, not a linear one, so speech at −20 dBFS fills two thirds of the bar instead of looking like silence.</p>
+      </div>
+      <div class="card">
+        <span class="icon" style="color:var(--danger)">🔒</span>
+        <h3>Secret-safe by design</h3>
+        <p>The password comes from an environment variable and is never written to config, logs or error messages. The config file is always safe to commit.</p>
+      </div>
+    </div>
+
+    <div class="verdicts">
+      <span class="verdict v-ok">● HEALTHY</span>
+      <span class="verdict v-warn">▲ STRAINED</span>
+      <span class="verdict v-bad">✖ DROPPING</span>
+    </div>
+  </div>
+</section>
+
+<section id="views">
+  <div class="wrap">
+    <h2>Six dashboards, one keypress apart</h2>
+    <p class="lede">Press a digit, or <kbd>Tab</kbd> through them.</p>
+
+    <div class="view">
+      <div class="view-head"><h3>Overview</h3><kbd>1</kbd></div>
+      <p>System load, video pipeline and a health verdict across the top; the live stream and recording outputs below; a bitrate chart along the bottom.</p>
+      <figure class="shot" style="margin-top:0">
+        <img src="images/overview.svg" alt="Overview dashboard" loading="lazy">
+      </figure>
+    </div>
+
+    <div class="view">
+      <div class="view-head"><h3>Performance</h3><kbd>2</kbd></div>
+      <p>Achieved FPS against the configured target and average render time against the frame budget, over an accounting panel that separates the three loss channels.</p>
+      <figure class="shot" style="margin-top:0">
+        <img src="images/performance.svg" alt="Performance dashboard with FPS and frame render time charts over frame accounting" loading="lazy">
+      </figure>
+    </div>
+
+    <div class="view">
+      <div class="view-head"><h3>Stream</h3><kbd>3</kbd></div>
+      <p>Everything OBS reports about both outputs, with a bitrate chart, a congestion trend, and a “how much longer can I record?” estimate from the write rate and free disk.</p>
+      <figure class="shot" style="margin-top:0">
+        <img src="images/stream.svg" alt="Stream dashboard with bitrate and congestion charts over stream and recording detail" loading="lazy">
+      </figure>
+    </div>
+
+    <div class="view">
+      <div class="view-head"><h3>Scenes</h3><kbd>4</kbd></div>
+      <p>The scene list with program and preview tagged, beside the active profile and scene collection. Read-only — this is a monitor, not a control surface.</p>
+      <figure class="shot" style="margin-top:0">
+        <img src="images/scenes.svg" alt="Scenes dashboard listing scenes with PROGRAM and PREVIEW tags beside profiles and collections" loading="lazy">
+      </figure>
+    </div>
+
+    <div class="view">
+      <div class="view-head"><h3>Audio</h3><kbd>5</kbd></div>
+      <p>Every audio-bearing input with its fader position and a live peak meter, on a dB scale with a −60 dBFS floor. Segments turn amber before you clip.</p>
+      <figure class="shot" style="margin-top:0">
+        <img src="images/audio.svg" alt="Audio dashboard with per-input dB meters and a scale legend" loading="lazy">
+      </figure>
+    </div>
+
+    <div class="view">
+      <div class="view-head"><h3>Log</h3><kbd>6</kbd></div>
+      <p>Scene switches, output state changes and mute toggles, timestamped relative to start — so “how long before the drop did the scene change?” isn't arithmetic.</p>
+      <figure class="shot" style="margin-top:0">
+        <img src="images/log.svg" alt="Log view listing timestamped OBS events" loading="lazy">
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="metrics">
+  <div class="wrap">
+    <h2>What the numbers mean</h2>
+    <p class="lede">
+      The full guide lives in
+      <a href="https://github.com/worxbend/obs-stats/blob/main/docs/metrics.md">docs/metrics.md</a>.
+      The short version:
+    </p>
+
+    <div class="cols">
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+        <tbody>
+          <tr><td><b>Renderer skipped</b></td><td>GPU — too many sources, heavy filters, a busy game</td></tr>
+          <tr><td><b>Encoder skipped</b></td><td>CPU or encoder — preset too slow, no hardware encoder</td></tr>
+          <tr><td><b>Network dropped</b></td><td>Uplink — not enough bandwidth, congestion, packet loss</td></tr>
+          <tr><td><b>Congestion rising</b></td><td>The uplink, about to start dropping</td></tr>
+        </tbody>
+      </table>
+
+      <table>
+        <thead><tr><th>Frame budget</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>under 50%</td><td>Comfortable</td></tr>
+          <tr><td>50–80%</td><td>Strained; a spike will cost frames</td></tr>
+          <tr><td>over 80%</td><td>On the edge; skips imminent</td></tr>
+          <tr><td>—</td><td>16.7 ms at 60 fps, 33.3 ms at 30</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="keys">
+  <div class="wrap">
+    <h2>Keyboard first</h2>
+    <p class="lede">Vim keys or arrows, digits to jump, mouse optional. Press <kbd>?</kbd> in the app for the same table, generated from the keymap itself.</p>
+
+    <div class="cols">
+      <table>
+        <thead><tr><th>Key</th><th>Navigation</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Tab</kbd> / <kbd>⇧Tab</kbd></td><td>Next / previous view</td></tr>
+          <tr><td><kbd>1</kbd> … <kbd>6</kbd></td><td>Jump to a view</td></tr>
+          <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Move the list cursor</td></tr>
+          <tr><td><kbd>g</kbd> / <kbd>G</kbd></td><td>Top / bottom</td></tr>
+        </tbody>
+      </table>
+
+      <table>
+        <thead><tr><th>Key</th><th>Data &amp; display</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>r</kbd></td><td>Refresh now</td></tr>
+          <tr><td><kbd>space</kbd></td><td>Pause the display</td></tr>
+          <tr><td><kbd>+</kbd> / <kbd>−</kbd></td><td>Poll faster / slower</td></tr>
+          <tr><td><kbd>t</kbd> / <kbd>F2</kbd></td><td>Theme picker</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure class="shot">
+      <img src="images/help.svg" alt="The help overlay listing every view and key binding" loading="lazy">
+    </figure>
+  </div>
+</section>
+
+<section id="themes">
+  <div class="wrap">
+    <h2>24 themes, previewed live</h2>
+    <p class="lede">
+      Press <kbd>F2</kbd>. Moving the cursor restyles the <em>entire</em> UI, not just a swatch —
+      <kbd>Enter</kbd> keeps it, <kbd>Esc</kbd> puts the old one back.
+    </p>
+
+    <figure class="shot" style="margin-top:0">
+      <img src="images/themes.svg" alt="The theme picker showing palette swatches with Dracula previewed across the whole dashboard" loading="lazy">
+    </figure>
+
+    <div class="themes">
+      <div class="theme"><span class="sw"><i style="background:#D97757"></i><i style="background:#87B37B"></i><i style="background:#E0B44C"></i><i style="background:#E06C5F"></i><i style="background:#7BA9C7"></i></span>Claude</div>
+      <div class="theme"><span class="sw"><i style="background:#309AE0"></i><i style="background:#5CC97A"></i><i style="background:#F0B43C"></i><i style="background:#E54B4B"></i><i style="background:#8AD1FF"></i></span>OBS Studio</div>
+      <div class="theme"><span class="sw"><i style="background:#6AE05A"></i><i style="background:#6AE05A"></i><i style="background:#F0E050"></i><i style="background:#E05050"></i><i style="background:#50C0E0"></i></span>Btop</div>
+      <div class="theme"><span class="sw"><i style="background:#88C0D0"></i><i style="background:#A3BE8C"></i><i style="background:#EBCB8B"></i><i style="background:#BF616A"></i><i style="background:#81A1C1"></i></span>Nord</div>
+      <div class="theme"><span class="sw"><i style="background:#BD93F9"></i><i style="background:#50FA7B"></i><i style="background:#F1FA8C"></i><i style="background:#FF5555"></i><i style="background:#8BE9FD"></i></span>Dracula</div>
+      <div class="theme"><span class="sw"><i style="background:#FE8019"></i><i style="background:#B8BB26"></i><i style="background:#FABD2F"></i><i style="background:#FB4934"></i><i style="background:#83A598"></i></span>Gruvbox Dark</div>
+      <div class="theme"><span class="sw"><i style="background:#AF3A03"></i><i style="background:#79740E"></i><i style="background:#B57614"></i><i style="background:#9D0006"></i><i style="background:#076678"></i></span>Gruvbox Light</div>
+      <div class="theme"><span class="sw"><i style="background:#268BD2"></i><i style="background:#859900"></i><i style="background:#B58900"></i><i style="background:#DC322F"></i><i style="background:#2AA198"></i></span>Solarized Dark</div>
+      <div class="theme"><span class="sw"><i style="background:#268BD2"></i><i style="background:#859900"></i><i style="background:#B58900"></i><i style="background:#DC322F"></i><i style="background:#2AA198"></i></span>Solarized Light</div>
+      <div class="theme"><span class="sw"><i style="background:#7AA2F7"></i><i style="background:#9ECE6A"></i><i style="background:#E0AF68"></i><i style="background:#F7768E"></i><i style="background:#7DCFFF"></i></span>Tokyo Night</div>
+      <div class="theme"><span class="sw"><i style="background:#CBA6F7"></i><i style="background:#A6E3A1"></i><i style="background:#F9E2AF"></i><i style="background:#F38BA8"></i><i style="background:#89B4FA"></i></span>Catppuccin Mocha</div>
+      <div class="theme"><span class="sw"><i style="background:#8839EF"></i><i style="background:#40A02B"></i><i style="background:#DF8E1D"></i><i style="background:#D20F39"></i><i style="background:#1E66F5"></i></span>Catppuccin Latte</div>
+      <div class="theme"><span class="sw"><i style="background:#A7C080"></i><i style="background:#A7C080"></i><i style="background:#DBBC7F"></i><i style="background:#E67E80"></i><i style="background:#7FBBB3"></i></span>Everforest</div>
+      <div class="theme"><span class="sw"><i style="background:#7E9CD8"></i><i style="background:#98BB6C"></i><i style="background:#E6C384"></i><i style="background:#E82424"></i><i style="background:#7AA89F"></i></span>Kanagawa</div>
+      <div class="theme"><span class="sw"><i style="background:#C4A7E7"></i><i style="background:#9CCFD8"></i><i style="background:#F6C177"></i><i style="background:#EB6F92"></i><i style="background:#31748F"></i></span>Rosé Pine</div>
+      <div class="theme"><span class="sw"><i style="background:#61AFEF"></i><i style="background:#98C379"></i><i style="background:#E5C07B"></i><i style="background:#E06C75"></i><i style="background:#56B6C2"></i></span>One Dark</div>
+      <div class="theme"><span class="sw"><i style="background:#A6E22E"></i><i style="background:#A6E22E"></i><i style="background:#E6DB74"></i><i style="background:#F92672"></i><i style="background:#66D9EF"></i></span>Monokai</div>
+      <div class="theme"><span class="sw"><i style="background:#E6B450"></i><i style="background:#AAD94C"></i><i style="background:#FFB454"></i><i style="background:#F07178"></i><i style="background:#59C2FF"></i></span>Ayu Dark</div>
+      <div class="theme"><span class="sw"><i style="background:#58A6FF"></i><i style="background:#3FB950"></i><i style="background:#D29922"></i><i style="background:#F85149"></i><i style="background:#79C0FF"></i></span>GitHub Dark</div>
+      <div class="theme"><span class="sw"><i style="background:#0969DA"></i><i style="background:#1A7F37"></i><i style="background:#9A6600"></i><i style="background:#CF222E"></i><i style="background:#0969DA"></i></span>GitHub Light</div>
+      <div class="theme"><span class="sw"><i style="background:#FF2E97"></i><i style="background:#72F1B8"></i><i style="background:#FEDE5D"></i><i style="background:#FE4450"></i><i style="background:#2DE2E6"></i></span>Synthwave</div>
+      <div class="theme"><span class="sw"><i style="background:#00FF55"></i><i style="background:#00FF55"></i><i style="background:#CCFF00"></i><i style="background:#FF3030"></i><i style="background:#40FFC0"></i></span>Matrix</div>
+      <div class="theme"><span class="sw"><i style="background:#FFFF00"></i><i style="background:#00FF00"></i><i style="background:#FFA500"></i><i style="background:#FF0000"></i><i style="background:#00FFFF"></i></span>High Contrast</div>
+      <div class="theme"><span class="sw"><i style="background:#F0F0F0"></i><i style="background:#5CC97A"></i><i style="background:#E0B44C"></i><i style="background:#E05050"></i><i style="background:#56B6C2"></i></span>Mono (TTY-safe)</div>
+    </div>
+
+    <p class="lede" style="margin-top:1.6rem">
+      <code>mono</code> uses only the 16 ANSI colours and never paints a background of its own —
+      right for a Linux virtual console. Pair it with <code>--ascii</code> when the font lacks
+      box-drawing glyphs. <code>high-contrast</code> distinguishes every state by more than
+      colour alone.
+    </p>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Install</h2>
+    <p class="lede">A single static binary. No runtime, no daemon, no dependencies.</p>
+
+    <div class="install" style="margin-left:0">
+<span class="c"># Linux, macOS — picks your platform and verifies the checksum</span>
+<span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/worxbend/obs-stats/main/scripts/install.sh | sh
+
+<span class="c"># or from source (Rust 1.85+)</span>
+<span class="p">$</span> cargo install --git https://github.com/worxbend/obs-stats
+    </div>
+
+    <p class="lede" style="margin-top:1.6rem">
+      Then in OBS: <b>Tools → WebSocket Server Settings → Enable WebSocket server</b>,
+      export the password from <b>Show Connect Info</b>, and run <code>obs-stats</code>.
+      Prebuilt archives cover Linux (x86-64, aarch64, musl), macOS (Intel, Apple Silicon)
+      and Windows (x86-64).
+    </p>
+
+    <div class="cta" style="justify-content:flex-start;margin-top:1.4rem">
+      <a class="btn btn-primary" href="https://github.com/worxbend/obs-stats/releases/latest">Releases</a>
+      <a class="btn btn-ghost" href="https://github.com/worxbend/obs-stats/blob/main/docs/troubleshooting.md">Troubleshooting</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap footer-row">
+    <span>MIT licensed</span>
+    <a href="https://github.com/worxbend/obs-stats">GitHub</a>
+    <a href="https://github.com/worxbend/obs-stats/blob/main/docs/configuration.md">Configuration</a>
+    <a href="https://github.com/worxbend/obs-stats/blob/main/docs/metrics.md">Metrics</a>
+    <a href="https://github.com/worxbend/obs-stats/issues">Issues</a>
+    <span class="sep">Built with <a href="https://ratatui.rs">ratatui</a></span>
+  </div>
+</footer>
+
+</body>
+</html>
