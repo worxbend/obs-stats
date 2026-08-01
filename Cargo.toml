@@ -2,7 +2,7 @@
 name = "obs-stats"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 description = "A btop-style terminal dashboard for OBS Studio, powered by obs-websocket 5.x"
 repository = "https://github.com/worxbend/obs-stats"

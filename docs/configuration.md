@@ -18,7 +18,7 @@ The password is never part of that chain — see [Secrets](#secrets).
 |---|---|
 | Linux | `~/.config/obs-stats/config.yml` |
 | macOS | `~/Library/Application Support/obs-stats/config.yml` |
-| Windows | `%APPDATA%\obs-stats\config.yml` |
+| Windows | `%APPDATA%\obs-stats\config\config.yml` |
 
 `$OBS_STATS_CONFIG` overrides this completely — it names a **file**, not a
 directory. `--config <path>` overrides that in turn, for one run.

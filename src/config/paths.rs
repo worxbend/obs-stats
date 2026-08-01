@@ -8,7 +8,15 @@ use std::path::PathBuf;
 /// Environment variable that overrides the config file location entirely.
 pub const CONFIG_PATH_ENV: &str = "OBS_STATS_CONFIG";
 
-/// The XDG-style config directory, e.g. `~/.config/obs-stats`.
+/// The per-user config directory.
+///
+/// The exact layout is whatever the platform convention is:
+///
+/// | Platform | Directory |
+/// |---|---|
+/// | Linux | `~/.config/obs-stats` |
+/// | macOS | `~/Library/Application Support/obs-stats` |
+/// | Windows | `%APPDATA%\obs-stats\config` |
 ///
 /// Falls back to `./.obs-stats` when the platform has no home directory,
 /// which keeps the app usable inside minimal containers.
@@ -38,11 +46,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_dir_ends_with_the_app_name() {
+    fn config_dir_is_namespaced_to_the_app() {
+        // The trailing component is platform-specific — Windows appends a
+        // `config` directory under the app's own — so the portable invariant
+        // is that the app name appears somewhere in the path.
         let dir = default_config_dir();
         assert!(
-            dir.ends_with("obs-stats") || dir.ends_with(".obs-stats"),
-            "unexpected config dir: {}",
+            dir.to_string_lossy().contains("obs-stats"),
+            "config dir is not namespaced: {}",
             dir.display()
         );
     }

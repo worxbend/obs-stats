@@ -60,7 +60,7 @@ Or grab a binary from the [releases page](https://github.com/worxbend/obs-stats/
 cargo install --git https://github.com/worxbend/obs-stats
 ```
 
-Requires Rust 1.85 or newer (2024 edition).
+Requires Rust 1.88 or newer (2024 edition; ratatui 0.30 sets the floor).
 
 ---
 
