@@ -19,7 +19,7 @@ use crate::tui::widgets::chrome;
 const KEY_WIDTH: usize = 16;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let lines = body(app.theme, app.show_icons);
+    let lines = body(app.theme, app.show_icons, app.unicode);
     // +2 for the border, +1 so a scrollbar-less panel never clips its last row.
     let height = (lines.len() as u16 + 3).min(area.height);
     let region = chrome::centered(area, 66.min(area.width), height);
@@ -33,7 +33,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 /// The overlay's text, as a flat list of lines.
 ///
 /// Split out so the content can be asserted on without a terminal.
-pub fn body(theme: &Theme, show_icons: bool) -> Vec<Line<'static>> {
+pub fn body(theme: &Theme, show_icons: bool, unicode: bool) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     lines.push(heading("Views", theme));
@@ -65,7 +65,11 @@ pub fn body(theme: &Theme, show_icons: bool) -> Vec<Line<'static>> {
         for binding in BINDINGS.iter().filter(|b| b.section == *section) {
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  {:<width$}", binding.keys, width = KEY_WIDTH - 2),
+                    format!(
+                        "  {:<width$}",
+                        binding.label(unicode),
+                        width = KEY_WIDTH - 2
+                    ),
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),
@@ -96,7 +100,7 @@ mod tests {
     use crate::tui::theme;
 
     fn rendered(show_icons: bool) -> String {
-        body(theme::FALLBACK, show_icons)
+        body(theme::FALLBACK, show_icons, true)
             .iter()
             .map(|line| {
                 line.spans
@@ -161,6 +165,6 @@ mod tests {
 
     #[test]
     fn the_overlay_is_not_empty() {
-        assert!(body(theme::FALLBACK, true).len() > View::ALL.len() + BINDINGS.len());
+        assert!(body(theme::FALLBACK, true, true).len() > View::ALL.len() + BINDINGS.len());
     }
 }

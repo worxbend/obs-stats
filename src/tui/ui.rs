@@ -209,6 +209,82 @@ mod tests {
         }
     }
 
+    /// Ranges `--ascii` exists to avoid: the glyphs a minimal console font is
+    /// most likely to be missing.
+    ///
+    /// General Punctuation (`…`, `—`) is deliberately *not* included — those
+    /// are near-universally available and substituting them would make the
+    /// output worse for no benefit. The docs say exactly this.
+    fn is_drawing_glyph(c: char) -> bool {
+        matches!(c as u32,
+            0x2190..=0x21FF   // Arrows
+            | 0x2500..=0x257F // Box Drawing
+            | 0x2580..=0x259F // Block Elements
+            | 0x25A0..=0x25FF // Geometric Shapes
+            | 0x1F000..=0x1FAFF // Emoji planes
+        )
+    }
+
+    #[test]
+    fn ascii_mode_emits_no_drawing_glyphs_in_any_view_or_overlay() {
+        for view in View::ALL {
+            for overlay in [Overlay::None, Overlay::Help, Overlay::Themes] {
+                let mut config = Config::default();
+                config.ui.unicode = false;
+                config.ui.show_icons = false;
+                let mut app = App::new(config);
+                app.view = view;
+                app.overlay = overlay;
+                // Populate enough state that the data paths render too, not
+                // just the empty-state placeholders.
+                app.snapshot.version.obs_version = "31.0.2".into();
+                app.snapshot.version.platform = "linux".into();
+                app.snapshot.video = crate::obs::stats::VideoSettings {
+                    base_width: 1920,
+                    base_height: 1080,
+                    output_width: 1280,
+                    output_height: 720,
+                    fps_numerator: 60,
+                    fps_denominator: 1,
+                };
+                app.snapshot.stream = crate::obs::stats::StreamStatus {
+                    active: true,
+                    ..crate::obs::stats::StreamStatus::default()
+                };
+                app.snapshot.inputs = vec![crate::obs::stats::AudioInput {
+                    name: "Mic/Aux".into(),
+                    kind: "pulse_input_capture".into(),
+                    volume_db: -6.0,
+                    peaks: vec![0.4, 0.2],
+                    ..crate::obs::stats::AudioInput::default()
+                }];
+                // Populate the histories, or the charts and sparklines draw
+                // nothing and this test passes without ever reaching them —
+                // which is exactly where the Unicode glyphs actually live.
+                for step in 0..64 {
+                    let wobble = f64::from(step % 8);
+                    app.snapshot.history.cpu.push(20.0 + wobble);
+                    app.snapshot.history.fps.push(59.0 + wobble / 10.0);
+                    app.snapshot.history.frame_time.push(3.0 + wobble / 4.0);
+                    app.snapshot.history.congestion.push(wobble);
+                    app.snapshot
+                        .history
+                        .stream_bitrate
+                        .push(5_000_000.0 + wobble * 100_000.0);
+                }
+
+                let rendered = render(&mut app, 120, 40);
+                if let Some(bad) = rendered.chars().find(|c| is_drawing_glyph(*c)) {
+                    panic!(
+                        "{}/{overlay:?} rendered {bad:?} (U+{:04X}) in ASCII mode",
+                        view.id(),
+                        bad as u32
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn ascii_mode_avoids_unicode_block_glyphs_in_the_chrome() {
         let mut app = app();

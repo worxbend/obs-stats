@@ -54,7 +54,7 @@ fn identity(app: &App) -> Line<'static> {
 
     let version = &app.snapshot.version;
     if !version.obs_version.is_empty() {
-        spans.push(dot(theme));
+        spans.push(dot(theme, app.unicode));
         spans.push(Span::styled(
             format!("OBS {}", version.obs_version),
             Style::default().fg(theme.fg),
@@ -67,7 +67,7 @@ fn identity(app: &App) -> Line<'static> {
         }
     }
     if !version.websocket_version.is_empty() {
-        spans.push(dot(theme));
+        spans.push(dot(theme, app.unicode));
         spans.push(Span::styled(
             format!("ws {}", version.websocket_version),
             Style::default().fg(theme.muted),
@@ -104,7 +104,7 @@ fn status(app: &App) -> Line<'static> {
             format!(" {}", util::duration_ms(snapshot.stream.duration_ms)),
             Style::default().fg(theme.fg),
         ));
-        spans.push(dot(theme));
+        spans.push(dot(theme, app.unicode));
     }
 
     if snapshot.record.active {
@@ -126,7 +126,7 @@ fn status(app: &App) -> Line<'static> {
             format!(" {}", util::duration_ms(snapshot.record.duration_ms)),
             Style::default().fg(theme.fg),
         ));
-        spans.push(dot(theme));
+        spans.push(dot(theme, app.unicode));
     }
 
     spans.extend(connection_chip(
@@ -163,8 +163,11 @@ fn connection_chip(
     spans
 }
 
-fn dot(theme: &Theme) -> Span<'static> {
-    Span::styled(" · ", Style::default().fg(theme.border))
+fn dot(theme: &Theme, unicode: bool) -> Span<'static> {
+    Span::styled(
+        if unicode { " · " } else { " | " },
+        Style::default().fg(theme.border),
+    )
 }
 
 #[cfg(test)]

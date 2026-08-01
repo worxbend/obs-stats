@@ -110,7 +110,7 @@ fn system_card(frame: &mut Frame, area: Rect, app: &App) {
         chrome::row(
             "WS I/O",
             format!(
-                "{} ↓  {} ↑",
+                "{} in  {} out",
                 stats.websocket_incoming_messages, stats.websocket_outgoing_messages
             ),
             theme.muted,
@@ -130,6 +130,7 @@ fn system_card(frame: &mut Frame, area: Rect, app: &App) {
         &snapshot.history.cpu,
         100.0,
         theme.accent,
+        app.unicode,
     );
 }
 
@@ -158,6 +159,7 @@ fn video_card(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    let glyphs = chrome::glyphs(app.unicode);
     let target = snapshot.video.target_fps();
     let fps_ratio = snapshot.fps_ratio();
     let budget = snapshot.frame_budget_ratio();
@@ -200,7 +202,7 @@ fn video_card(frame: &mut Frame, area: Rect, app: &App) {
             if snapshot.video.base_width == 0 {
                 "—".to_string()
             } else {
-                snapshot.video.geometry()
+                snapshot.video.geometry(glyphs.arrow)
             },
             if snapshot.video.is_downscaled() {
                 theme.info
@@ -222,6 +224,7 @@ fn video_card(frame: &mut Frame, area: Rect, app: &App) {
         &snapshot.history.fps,
         target.max(30.0),
         theme.accent_alt,
+        app.unicode,
     );
 }
 
@@ -253,6 +256,7 @@ fn health_card(frame: &mut Frame, area: Rect, app: &App) {
         &snapshot.history.congestion,
         100.0,
         color,
+        app.unicode,
     );
 }
 
@@ -461,6 +465,7 @@ fn render_bitrate(frame: &mut Frame, area: Rect, app: &App) {
         1_000_000.0,
         theme.accent,
         theme,
+        app.unicode,
     );
 }
 

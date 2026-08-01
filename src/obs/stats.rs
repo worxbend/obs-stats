@@ -146,9 +146,12 @@ impl VideoSettings {
     }
 
     /// `1920x1080 → 1280x720` style summary of the scaling in effect.
-    pub fn geometry(&self) -> String {
+    ///
+    /// The arrow is supplied by the caller so the UI's ASCII mode can pass
+    /// `->` instead; this layer has no opinion about glyphs.
+    pub fn geometry(&self, arrow: &str) -> String {
         format!(
-            "{}x{} → {}x{}",
+            "{}x{} {arrow} {}x{}",
             self.base_width, self.base_height, self.output_width, self.output_height
         )
     }
@@ -411,7 +414,8 @@ mod tests {
             "fpsNumerator": 60, "fpsDenominator": 1
         }));
         assert_eq!(settings.target_fps(), 60.0);
-        assert_eq!(settings.geometry(), "1920x1080 → 1280x720");
+        assert_eq!(settings.geometry("→"), "1920x1080 → 1280x720");
+        assert_eq!(settings.geometry("->"), "1920x1080 -> 1280x720");
         assert!(settings.is_downscaled());
     }
 

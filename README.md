@@ -186,7 +186,11 @@ Press `F2` or `t`. Moving the cursor restyles the entire UI live; `Enter` keeps 
 
 Set one permanently with `ui.theme` in the config, or per-run with `--theme <id>`. `obs-stats themes` lists them all.
 
-On a Linux virtual console or any terminal without a good Unicode font, use `--ascii` (or `ui.unicode: false`) — every glyph has an ASCII fallback, and `mono` never paints a background of its own.
+On a Linux virtual console or any terminal without a good Unicode font, use `--ascii` (or `ui.unicode: false`). Borders, bars, meters, markers, separators **and the charts** all switch to ASCII — ratatui's own `Chart` and `Sparkline` draw with braille and block elements and have no ASCII mode, so `obs-stats` renders those itself. Pair it with `mono`, which never paints a background of its own:
+
+```sh
+obs-stats --ascii --theme mono
+```
 
 ---
 

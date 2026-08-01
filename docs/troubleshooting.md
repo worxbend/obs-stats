@@ -82,7 +82,8 @@ status bar and press `space`.
 
 ## Everything is boxes, question marks, or mojibake
 
-Your terminal font lacks the box-drawing and block ranges.
+Your terminal font lacks the box-drawing, block or braille ranges. ASCII mode
+substitutes all of them, charts included.
 
 ```sh
 obs-stats --ascii

@@ -49,6 +49,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         1_000_000.0,
         theme.accent,
         theme,
+        app.unicode,
     );
 
     let congestion = snapshot.stream.congestion * 100.0;
@@ -70,6 +71,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         100.0,
         theme.scale_up(congestion, 20.0, 50.0),
         theme,
+        app.unicode,
     );
 
     let detail_regions = Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(details);

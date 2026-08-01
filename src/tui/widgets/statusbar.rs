@@ -55,9 +55,15 @@ fn hints(app: &App) -> Line<'static> {
         _ => {}
     }
 
+    // The picker hint names the cursor keys, which have no ASCII glyph.
+    let cursor_keys = if app.unicode { "↑↓" } else { "up/dn" };
     let pairs: &[(&str, &str)] = match app.overlay {
         Overlay::Help => &[("Esc", "close")],
-        Overlay::Themes => &[("↑↓", "preview"), ("Enter", "apply"), ("Esc", "cancel")],
+        Overlay::Themes => &[
+            (cursor_keys, "preview"),
+            ("Enter", "apply"),
+            ("Esc", "cancel"),
+        ],
         Overlay::None => &[
             ("Tab", "view"),
             ("1-6", "jump"),
@@ -170,6 +176,14 @@ mod tests {
         app.overlay = Overlay::Themes;
         let rendered = text(&hints(&app));
         assert!(rendered.contains("Enter"));
+        assert!(rendered.contains("↑↓"));
+
+        // ASCII mode must name the same keys without arrow glyphs.
+        app.unicode = false;
+        let ascii = text(&hints(&app));
+        assert!(ascii.contains("up/dn"));
+        assert!(ascii.is_ascii(), "{ascii}");
+        app.unicode = true;
         assert!(rendered.contains("cancel"));
         assert!(
             !rendered.contains("refresh"),

@@ -9,6 +9,7 @@
 //! cargo run --example screenshot                 # live OBS if reachable
 //! cargo run --example screenshot -- --demo       # synthetic data only
 //! cargo run --example screenshot -- --text       # dump plain text instead
+//! cargo run --example screenshot -- --ascii      # ASCII fallback rendering
 //! ```
 
 use std::fmt::Write as _;
@@ -44,6 +45,9 @@ const FONT_SIZE: f32 = 14.0;
 const BASELINE: f32 = 13.6;
 /// Padding around the terminal grid, so the image reads as a window.
 const PADDING: f32 = 12.0;
+
+/// Set by `--ascii`, so the fallback rendering can be inspected the same way.
+static ASCII: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 struct Shot {
     name: &'static str,
@@ -107,6 +111,10 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let demo_only = args.iter().any(|arg| arg == "--demo");
     let text_mode = args.iter().any(|arg| arg == "--text");
+    ASCII.store(
+        args.iter().any(|arg| arg == "--ascii"),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     let snapshot = if demo_only {
         demo_snapshot()
@@ -152,6 +160,10 @@ fn main() {
 fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
     let mut config = Config::default();
     config.ui.theme = shot.theme.to_string();
+    if ASCII.load(std::sync::atomic::Ordering::Relaxed) {
+        config.ui.unicode = false;
+        config.ui.show_icons = false;
+    }
     let mut app = App::new(config);
     app.snapshot = snapshot.clone();
     app.view = shot.view;

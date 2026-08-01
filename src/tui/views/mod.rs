@@ -40,7 +40,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 /// Sparkline scales to the maximum in the data it is given, so a flat series
 /// would otherwise render as a full bar; `floor` sets a minimum ceiling to
 /// keep quiet periods looking quiet.
-pub fn sparkline(frame: &mut Frame, area: Rect, history: &History, floor: f64, color: Color) {
+pub fn sparkline(
+    frame: &mut Frame,
+    area: Rect,
+    history: &History,
+    floor: f64,
+    color: Color,
+    unicode: bool,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -48,20 +55,66 @@ pub fn sparkline(frame: &mut Frame, area: Rect, history: &History, floor: f64, c
     // floor first: otherwise a 59-60fps series renders as a solid block.
     let (base, top) = history.axis_range(floor);
     let span = (top - base).max(1.0);
-    let data: Vec<u64> = history
+    let normalized: Vec<f64> = history
         .tail(area.width as usize)
         .into_iter()
-        .map(|sample| (((sample - base) / span).clamp(0.0, 1.0) * 100.0).round() as u64)
+        .map(|sample| ((sample - base) / span).clamp(0.0, 1.0))
         .collect();
-    let ceiling = 100;
+
+    if !unicode {
+        // ratatui's Sparkline is built from U+2580 block elements and has no
+        // ASCII mode, so the fallback draws its own bars.
+        frame.render_widget(
+            Paragraph::new(ascii_bars(&normalized, area.width, area.height, color)),
+            area,
+        );
+        return;
+    }
+
+    let data: Vec<u64> = normalized
+        .into_iter()
+        .map(|value| (value * 100.0).round() as u64)
+        .collect();
 
     frame.render_widget(
         Sparkline::default()
             .data(&data)
-            .max(ceiling)
+            .max(100)
             .style(Style::default().fg(color)),
         area,
     );
+}
+
+/// A column chart of `values` (each `0.0..=1.0`) drawn with `#`.
+///
+/// Rows are produced top-down, each column filled from the bottom up, which
+/// is the same reading as the Unicode sparkline it stands in for.
+fn ascii_bars(values: &[f64], width: u16, height: u16, color: Color) -> Vec<Line<'static>> {
+    let style = Style::default().fg(color);
+    let width = width as usize;
+    let height = height as usize;
+    // Newest sample on the right: a partly-filled history leaves blank columns
+    // on the left rather than stretching to fill the area.
+    let offset = width.saturating_sub(values.len());
+
+    (0..height)
+        .map(|row| {
+            // Row 0 is the top, so it stands for the highest band.
+            let threshold = (height - row - 1) as f64 / height as f64;
+            let text: String = (0..width)
+                .map(|column| {
+                    match column
+                        .checked_sub(offset)
+                        .and_then(|index| values.get(index))
+                    {
+                        Some(value) if *value > threshold => '#',
+                        _ => ' ',
+                    }
+                })
+                .collect();
+            Line::from(Span::styled(text, style))
+        })
+        .collect()
 }
 
 /// A braille line chart of `history` over `area`, labelled on both axes.
@@ -82,11 +135,12 @@ pub fn line_chart(
     floor: f64,
     color: Color,
     theme: &Theme,
+    unicode: bool,
 ) {
     if area.width < 8 || area.height < 4 {
         // Too small for axes; degrade to a sparkline rather than drawing a
         // chart whose labels would eat the whole panel.
-        sparkline(frame, area, history, floor, color);
+        sparkline(frame, area, history, floor, color, unicode);
         return;
     }
 
@@ -101,6 +155,16 @@ pub fn line_chart(
 
     let x_max = (points.len().saturating_sub(1)).max(1) as f64;
     let (y_min, y_max) = history.axis_range(floor);
+
+    if !unicode {
+        // Chart draws its axes with box-drawing runes and its series with
+        // braille, neither of which has an ASCII substitute in ratatui.
+        frame.render_widget(
+            Paragraph::new(ascii_plot(history, area, y_min, y_max, fmt, color, theme)),
+            area,
+        );
+        return;
+    }
 
     let dataset = Dataset::default()
         .name(label.to_string())
@@ -129,6 +193,67 @@ pub fn line_chart(
         .legend_position(None);
 
     frame.render_widget(chart, area);
+}
+
+/// An ASCII scatter plot with a labelled left gutter.
+///
+/// Stands in for [`ratatui::widgets::Chart`], which has no ASCII mode: its
+/// axes are box-drawing runes and its series is braille.
+fn ascii_plot(
+    history: &History,
+    area: Rect,
+    y_min: f64,
+    y_max: f64,
+    fmt: fn(f64) -> String,
+    color: Color,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let gutter = fmt(y_max).chars().count().max(fmt(y_min).chars().count()) + 1;
+    let plot_width = (area.width as usize).saturating_sub(gutter + 1);
+    let height = area.height as usize;
+    if plot_width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let samples = history.tail(plot_width);
+    // Newest sample on the right; a short history leaves the left blank.
+    let offset = plot_width.saturating_sub(samples.len());
+    let span = (y_max - y_min).max(f64::EPSILON);
+    let axis_style = Style::default().fg(theme.muted);
+    let border_style = Style::default().fg(theme.border);
+
+    (0..height)
+        .map(|row| {
+            // Label only the extremes and the midpoint, as the Unicode chart does.
+            let label = match row {
+                0 => fmt(y_max),
+                _ if row == height / 2 => fmt((y_min + y_max) / 2.0),
+                _ if row == height - 1 => fmt(y_min),
+                _ => String::new(),
+            };
+
+            let text: String = (0..plot_width)
+                .map(|column| {
+                    let Some(sample) = column
+                        .checked_sub(offset)
+                        .and_then(|index| samples.get(index))
+                    else {
+                        return ' ';
+                    };
+                    let fraction = ((sample - y_min) / span).clamp(0.0, 1.0);
+                    // Row 0 is the top, so invert the fraction to a row index.
+                    let plotted = ((1.0 - fraction) * (height - 1) as f64).round() as usize;
+                    if plotted == row { '*' } else { ' ' }
+                })
+                .collect();
+
+            Line::from(vec![
+                Span::styled(format!("{label:>gutter$}"), axis_style),
+                Span::styled("|", border_style),
+                Span::styled(text, Style::default().fg(color)),
+            ])
+        })
+        .collect()
 }
 
 /// A large centred verdict word, e.g. `HEALTHY`.
@@ -210,6 +335,54 @@ mod tests {
     #[test]
     fn bar_width_is_capped_so_wide_terminals_stay_readable() {
         assert_eq!(bar_width(500, 8, 8), 40);
+    }
+
+    fn grid(rows: &[Line<'_>]) -> Vec<String> {
+        rows.iter()
+            .map(|line| line.spans[0].content.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn ascii_bars_fill_from_the_bottom_up() {
+        // Column 0 full, column 1 half, column 2 empty.
+        let rows = grid(&ascii_bars(&[1.0, 0.5, 0.0], 3, 4, Color::Green));
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            rows[0], "#  ",
+            "only the tallest column reaches the top row"
+        );
+        assert_eq!(rows[3], "## ", "the bottom row holds every non-zero column");
+    }
+
+    #[test]
+    fn ascii_bars_right_align_a_partly_filled_history() {
+        // Two samples in a six-wide area belong on the right, where the
+        // newest data is — not stretched or left-aligned.
+        let rows = grid(&ascii_bars(&[1.0, 1.0], 6, 1, Color::Green));
+        assert_eq!(rows[0], "    ##");
+    }
+
+    #[test]
+    fn ascii_bars_survive_a_degenerate_area() {
+        assert!(
+            ascii_bars(&[1.0], 0, 1, Color::Green)[0].spans[0]
+                .content
+                .is_empty()
+        );
+        assert!(ascii_bars(&[1.0], 4, 0, Color::Green).is_empty());
+        assert!(
+            ascii_bars(&[], 4, 2, Color::Green)
+                .iter()
+                .all(|line| { line.spans[0].content.chars().all(|c| c == ' ') })
+        );
+    }
+
+    #[test]
+    fn ascii_bars_are_pure_ascii() {
+        for row in grid(&ascii_bars(&[0.0, 0.5, 1.0], 8, 3, Color::Green)) {
+            assert!(row.is_ascii(), "{row:?} is not ASCII");
+        }
     }
 
     #[test]

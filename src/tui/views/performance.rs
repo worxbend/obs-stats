@@ -55,6 +55,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         target.max(30.0),
         theme.scale_down(snapshot.fps_ratio() * 100.0, 95.0, 85.0),
         theme,
+        app.unicode,
     );
 
     let budget_ms = if target > 0.0 { 1000.0 / target } else { 0.0 };
@@ -80,6 +81,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         budget_ms.max(1.0),
         theme.scale_up(snapshot.frame_budget_ratio() * 100.0, 50.0, 80.0),
         theme,
+        app.unicode,
     );
 
     let counters_block = chrome::panel_with_note(

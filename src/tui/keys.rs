@@ -54,9 +54,20 @@ pub enum Action {
 
 /// One documented binding. The help overlay renders this table verbatim.
 pub struct Binding {
+    /// Key label using arrow glyphs.
     pub keys: &'static str,
+    /// The same label without arrows, for ASCII mode. Equal to `keys` where
+    /// the label contains no glyphs to substitute.
+    pub keys_ascii: &'static str,
     pub description: &'static str,
     pub section: &'static str,
+}
+
+impl Binding {
+    /// The label to print, given the Unicode setting.
+    pub fn label(&self, unicode: bool) -> &'static str {
+        if unicode { self.keys } else { self.keys_ascii }
+    }
 }
 
 /// The user-facing key reference.
@@ -64,76 +75,91 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         section: "Navigation",
         keys: "Tab / →",
+        keys_ascii: "Tab / Right",
         description: "Next view",
     },
     Binding {
         section: "Navigation",
         keys: "Shift-Tab / ←",
+        keys_ascii: "Shift-Tab / Left",
         description: "Previous view",
     },
     Binding {
         section: "Navigation",
         keys: "1 … 6",
+        keys_ascii: "1 - 6",
         description: "Jump straight to a view",
     },
     Binding {
         section: "Navigation",
         keys: "j / k, ↓ / ↑",
+        keys_ascii: "j / k, Down / Up",
         description: "Move the list cursor",
     },
     Binding {
         section: "Navigation",
         keys: "PgDn / PgUp",
+        keys_ascii: "PgDn / PgUp",
         description: "Move the cursor a page",
     },
     Binding {
         section: "Navigation",
         keys: "g / G",
+        keys_ascii: "g / G",
         description: "Jump to the top / bottom",
     },
     Binding {
         section: "Data",
         keys: "r",
+        keys_ascii: "r",
         description: "Refresh now",
     },
     Binding {
         section: "Data",
         keys: "space / p",
+        keys_ascii: "space / p",
         description: "Pause or resume the display",
     },
     Binding {
         section: "Data",
         keys: "+ / -",
+        keys_ascii: "+ / -",
         description: "Poll faster / slower",
     },
     Binding {
         section: "Appearance",
         keys: "F2 / t",
+        keys_ascii: "F2 / t",
         description: "Theme picker",
     },
     Binding {
         section: "Appearance",
         keys: "u",
+        keys_ascii: "u",
         description: "Toggle Unicode drawing",
     },
     Binding {
         section: "General",
         keys: "? / F1",
+        keys_ascii: "? / F1",
         description: "This help",
     },
     Binding {
         section: "General",
         keys: "q / Esc / Ctrl-C",
+        keys_ascii: "q / Esc / Ctrl-C",
         description: "Quit",
     },
     Binding {
         section: "Overlays",
         keys: "Enter",
+        keys_ascii: "Enter",
         description: "Apply and close",
     },
     Binding {
         section: "Overlays",
         keys: "Esc",
+        keys_ascii: "Esc",
         description: "Close, reverting the preview",
     },
 ];
@@ -427,7 +453,17 @@ mod tests {
                 binding.section
             );
             assert!(!binding.keys.is_empty());
+            assert!(!binding.keys_ascii.is_empty());
             assert!(!binding.description.is_empty());
+        }
+    }
+
+    #[test]
+    fn ascii_key_labels_contain_no_arrow_glyphs() {
+        for binding in BINDINGS {
+            assert_eq!(binding.label(true), binding.keys);
+            let ascii = binding.label(false);
+            assert!(ascii.is_ascii(), "'{ascii}' is not usable in ASCII mode");
         }
     }
 

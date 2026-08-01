@@ -6,6 +6,7 @@
 
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Padding};
 
@@ -60,6 +61,22 @@ pub fn glyphs(unicode: bool) -> Glyphs {
     }
 }
 
+/// Border drawn in ASCII mode.
+///
+/// `BorderType::Plain` is *not* plain ASCII — it is U+2500 box drawing, the
+/// exact range `--ascii` exists to avoid. Every other border style ratatui
+/// ships is Unicode too, so the fallback needs its own set.
+const ASCII_BORDER: border::Set = border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+
 /// A bordered panel.
 ///
 /// The focused panel gets a thick border in the accent colour; everything
@@ -70,11 +87,6 @@ pub fn panel<'a>(
     theme: &Theme,
     unicode: bool,
 ) -> Block<'a> {
-    let border_type = match (unicode, focused) {
-        (true, true) => BorderType::Thick,
-        (true, false) => BorderType::Rounded,
-        (false, _) => BorderType::Plain,
-    };
     let border_color = if focused {
         theme.border_focus
     } else {
@@ -84,12 +96,23 @@ pub fn panel<'a>(
         .fg(if focused { theme.accent } else { theme.muted })
         .add_modifier(Modifier::BOLD);
 
-    Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(border_type)
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(format!(" {} ", title.into()), title_style))
-        .padding(Padding::horizontal(1))
+        .padding(Padding::horizontal(1));
+
+    if unicode {
+        // Focus is signalled by weight as well as colour, so it survives a
+        // monochrome terminal.
+        block.border_type(if focused {
+            BorderType::Thick
+        } else {
+            BorderType::Rounded
+        })
+    } else {
+        block.border_set(ASCII_BORDER)
+    }
 }
 
 /// A panel with a right-aligned subtitle in the top border.
@@ -426,6 +449,24 @@ mod tests {
         // And it must stay inside the parent.
         assert!(centered.right() <= area.right());
         assert!(centered.bottom() <= area.bottom());
+    }
+
+    #[test]
+    fn the_ascii_border_set_is_actually_ascii() {
+        // ratatui's "Plain" border is U+2500 box drawing, so the fallback has
+        // to bring its own set — this is the guard against regressing to it.
+        for glyph in [
+            ASCII_BORDER.top_left,
+            ASCII_BORDER.top_right,
+            ASCII_BORDER.bottom_left,
+            ASCII_BORDER.bottom_right,
+            ASCII_BORDER.vertical_left,
+            ASCII_BORDER.vertical_right,
+            ASCII_BORDER.horizontal_top,
+            ASCII_BORDER.horizontal_bottom,
+        ] {
+            assert!(glyph.is_ascii(), "{glyph} is not ASCII");
+        }
     }
 
     #[test]
