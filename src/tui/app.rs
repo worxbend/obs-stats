@@ -42,6 +42,12 @@ pub struct App {
     pub should_quit: bool,
     /// Monotonic frame counter, used by the header's activity indicator.
     pub frame: u64,
+    /// Version shown in the header.
+    ///
+    /// A field rather than a direct read of [`crate::VERSION`] so the
+    /// screenshot generator can pin it: the docs images would otherwise drift
+    /// on every release bump, and CI's no-drift check would fail every time.
+    pub version: String,
     /// Cursor position per view, indexed by [`View::index`].
     selection: [usize; View::ALL.len()],
     /// How many rows the focused list last rendered, so paging knows its step
@@ -71,6 +77,7 @@ impl App {
             poll_interval: Duration::from_millis(config.ui.poll_interval_ms),
             should_quit: false,
             frame: 0,
+            version: crate::VERSION.to_string(),
             selection: [0; View::ALL.len()],
             row_counts: [0; View::ALL.len()],
             theme_cursor: theme::index_of(&config.ui.theme),

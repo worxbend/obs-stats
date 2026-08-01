@@ -265,7 +265,7 @@ One background task owns the socket. It reconnects on its own with backoff, poll
 
 Polling is split by cost. Every tick sends one batched request for `GetStats` + `GetStreamStatus` + `GetRecordStatus`. Every tenth tick adds scenes, inputs, profiles, collections and video settings — things that change on human timescales. Audio levels arrive as `InputVolumeMeters` events rather than being polled at all.
 
-The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 351 tests, no live OBS required.
+The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 361 tests, no live OBS required.
 
 ---
 
@@ -282,7 +282,7 @@ The layers are separable and separately tested: `obs` (protocol) → `metrics` (
 ## 🛠️ Development
 
 ```sh
-cargo test                                  # 351 tests, no OBS needed
+cargo test                                  # 361 tests, no OBS needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run --example screenshot -- --demo    # regenerate docs/images/*.svg

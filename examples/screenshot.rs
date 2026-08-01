@@ -43,6 +43,13 @@ const CELL_HEIGHT: f32 = 18.0;
 const FONT_SIZE: f32 = 14.0;
 /// Distance from the top of a cell to the text baseline.
 const BASELINE: f32 = 13.6;
+
+/// Version label baked into the screenshots.
+///
+/// Pinned rather than taken from the crate: the header prints the version, so
+/// letting the real one through would redraw every image on every release
+/// bump and fail CI's no-drift check each time.
+const SHOWN_VERSION: &str = "0.1.0";
 /// Padding around the terminal grid, so the image reads as a window.
 const PADDING: f32 = 12.0;
 
@@ -171,6 +178,7 @@ fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
     // A fixed frame number keeps the blinking LIVE badge lit, so regenerating
     // the screenshots produces byte-identical output.
     app.frame = 3;
+    app.version = SHOWN_VERSION.to_string();
 
     let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
     terminal

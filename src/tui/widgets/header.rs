@@ -10,7 +10,7 @@ use crate::metrics::{ConnectionState, Snapshot};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
 use crate::tui::widgets::chrome;
-use crate::{APP_NAME, VERSION, util};
+use crate::{APP_NAME, util};
 
 /// Height the header occupies, including its rule.
 pub const HEIGHT: u16 = 2;
@@ -49,7 +49,10 @@ fn identity(app: &App) -> Line<'static> {
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" v{VERSION}"), Style::default().fg(theme.muted)),
+        Span::styled(
+            format!(" v{}", app.version),
+            Style::default().fg(theme.muted),
+        ),
     ];
 
     let version = &app.snapshot.version;
@@ -192,7 +195,18 @@ mod tests {
     fn identity_always_shows_the_app_and_its_version() {
         let rendered = text(&identity(&app()));
         assert!(rendered.starts_with(APP_NAME));
-        assert!(rendered.contains(VERSION));
+        assert!(rendered.contains(crate::VERSION));
+    }
+
+    #[test]
+    fn the_header_version_can_be_pinned() {
+        // The screenshot generator relies on this to keep docs/images stable
+        // across releases.
+        let mut app = app();
+        app.version = "9.9.9".into();
+        let rendered = text(&identity(&app));
+        assert!(rendered.contains("v9.9.9"));
+        assert!(!rendered.contains(crate::VERSION));
     }
 
     #[test]
