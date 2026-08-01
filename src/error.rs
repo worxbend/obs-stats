@@ -32,6 +32,12 @@ pub enum Error {
     #[error("the OBS connection closed")]
     Disconnected,
 
+    /// An established connection failed mid-session — typically a write to a
+    /// socket whose peer has gone away. Distinct from [`Error::ConnectionFailed`],
+    /// which is about never having got connected in the first place.
+    #[error("the OBS connection was lost: {0}")]
+    ConnectionLost(String),
+
     #[error("OBS did not answer {request} within {timeout_ms}ms")]
     RequestTimeout { request: String, timeout_ms: u64 },
 
@@ -67,7 +73,7 @@ impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
             Error::ConfigInvalid(_) | Error::ConfigRead(_) | Error::ConfigWrite(_) => 2,
-            Error::ConnectionFailed { .. } | Error::Disconnected => 3,
+            Error::ConnectionFailed { .. } | Error::Disconnected | Error::ConnectionLost(_) => 3,
             Error::AuthFailed | Error::AuthRequired => 4,
             Error::RequestTimeout { .. } | Error::RequestFailed { .. } | Error::Protocol(_) => 5,
             Error::Terminal(_) | Error::Io(_) => 1,
@@ -82,6 +88,7 @@ impl Error {
         match self {
             Error::ConnectionFailed { .. }
             | Error::Disconnected
+            | Error::ConnectionLost(_)
             | Error::RequestTimeout { .. }
             | Error::Io(_) => true,
             Error::AuthFailed
@@ -161,6 +168,17 @@ mod tests {
             }
             .is_retryable()
         );
+    }
+
+    #[test]
+    fn a_lost_connection_is_retryable_and_names_its_cause() {
+        let error = Error::ConnectionLost("broken pipe".into());
+        assert!(error.is_retryable());
+        assert_eq!(error.exit_code(), 3);
+        let message = error.to_string();
+        assert!(message.contains("broken pipe"), "{message}");
+        // It must not read as a failure to *establish* a connection.
+        assert!(!message.contains("could not connect"), "{message}");
     }
 
     #[test]

@@ -50,7 +50,7 @@ row's mute marker are both covered by tests that assert this.
 
 ## Testing
 
-`cargo test` — 350+ tests, no terminal and no live OBS required. The TUI is
+`cargo test` — 351 tests, no terminal and no live OBS required. The TUI is
 exercised through ratatui's `TestBackend`; the client through synthetic
 `Update`s. Rendering tests cover every view × every theme, plus cramped
 terminals, so a layout that underflows is caught.

@@ -7,6 +7,7 @@
 Watch CPU, frame pacing, encoder health, outputs, scenes and audio — live, from a terminal, over obs-websocket 5.x.
 
 [![Latest release](https://img.shields.io/github/v/release/worxbend/obs-stats?style=for-the-badge&color=D97757&labelColor=1B1916&logo=github)](https://github.com/worxbend/obs-stats/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/worxbend/obs-stats/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=1B1916&color=87B37B)](https://github.com/worxbend/obs-stats/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-87B37B?style=for-the-badge&labelColor=1B1916)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/Rust-2024-D97757?style=for-the-badge&logo=rust&labelColor=1B1916)](https://www.rust-lang.org)
 [![Ratatui](https://img.shields.io/badge/TUI-ratatui-7BA9C7?style=for-the-badge&labelColor=1B1916)](https://ratatui.rs)
@@ -260,7 +261,7 @@ One background task owns the socket. It reconnects on its own with backoff, poll
 
 Polling is split by cost. Every tick sends one batched request for `GetStats` + `GetStreamStatus` + `GetRecordStatus`. Every tenth tick adds scenes, inputs, profiles, collections and video settings — things that change on human timescales. Audio levels arrive as `InputVolumeMeters` events rather than being polled at all.
 
-The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 350 tests, no live OBS required.
+The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 351 tests, no live OBS required.
 
 ---
 
@@ -277,7 +278,7 @@ The layers are separable and separately tested: `obs` (protocol) → `metrics` (
 ## 🛠️ Development
 
 ```sh
-cargo test                                  # 350 tests, no OBS needed
+cargo test                                  # 351 tests, no OBS needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run --example screenshot -- --demo    # regenerate docs/images/*.svg

@@ -574,13 +574,13 @@ async fn emit(update_tx: &mpsc::Sender<Update>, update: Update) {
 async fn send_json<T: serde::Serialize>(socket: &mut Socket, payload: &T) -> Result<()> {
     let text =
         serde_json::to_string(payload).map_err(|error| Error::Protocol(error.to_string()))?;
+    // A failed write means the peer went away mid-session. Reporting that as
+    // ConnectionFailed would print "could not connect to OBS at :" — the URL
+    // is not available here, and it is the wrong thing to say anyway.
     socket
         .send(Message::Text(text))
         .await
-        .map_err(|error| Error::ConnectionFailed {
-            url: String::new(),
-            reason: error.to_string(),
-        })
+        .map_err(|error| Error::ConnectionLost(error.to_string()))
 }
 
 fn batch(request_id: &str, requests: Vec<Request>) -> Envelope {

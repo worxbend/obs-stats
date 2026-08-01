@@ -168,8 +168,11 @@ h1 span { color: var(--accent); }
   font-family: var(--mono);
   font-size: 0.86rem;
   text-align: left;
-  overflow-x: auto;
-  white-space: nowrap;
+  /* pre-wrap keeps the line breaks between commands while still wrapping the
+     long curl URL, so nothing is clipped at any width. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.9;
 }
 .install .p { color: var(--success); user-select: none; }
 .install .c { color: var(--muted); }
@@ -324,7 +327,6 @@ code {
 }
 
 @media (max-width: 640px) {
-  .install { white-space: pre-wrap; word-break: break-all; }
   td:first-child { width: 42%; }
 }
 </style>
