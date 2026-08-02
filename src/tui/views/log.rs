@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::metrics::LogEntry;
 use crate::obs::client::LogLevel;
@@ -22,6 +22,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = app.theme;
     let entries = app.snapshot.log.clone();
     app.set_row_count(View::Log, entries.len());
+    // Owned by the app so the settled offset outlives the frame; see
+    // `App::take_list_state`.
+    let mut state = app.take_list_state(View::Log);
 
     let [context_area, list_area] =
         Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).areas(area);
@@ -61,6 +64,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             )),
             inner,
         );
+        app.put_list_state(View::Log, inner, state);
         return;
     }
 
@@ -76,9 +80,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let mut state = ListState::default();
     state.select(Some(app.selection(View::Log)));
     frame.render_stateful_widget(list, inner, &mut state);
+    app.put_list_state(View::Log, inner, state);
 }
 
 /// One log row: relative timestamp, severity glyph, message.

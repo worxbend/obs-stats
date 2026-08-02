@@ -18,7 +18,8 @@ use crate::tui::widgets::chrome;
 /// Width of the key column, wide enough for the longest binding.
 const KEY_WIDTH: usize = 16;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+/// Draw the overlay, returning its panel so a click outside can dismiss it.
+pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Rect {
     let lines = body(app.theme, app.show_icons, app.unicode);
     // +2 for the border, +1 so a scrollbar-less panel never clips its last row.
     let height = (lines.len() as u16 + 3).min(area.height);
@@ -28,6 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let block = chrome::panel("Help", true, app.theme, app.unicode)
         .style(Style::default().bg(app.theme.bg));
     frame.render_widget(Paragraph::new(lines).block(block), region);
+    region
 }
 
 /// The overlay's text, as a flat list of lines.

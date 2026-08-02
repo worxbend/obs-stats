@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::obs::stats::AudioInput;
 use crate::tui::app::App;
@@ -22,6 +22,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = app.theme;
     let inputs = app.snapshot.audio_inputs().to_vec();
     app.set_row_count(View::Audio, inputs.len());
+    // Owned by the app so the settled offset outlives the frame; see
+    // `App::take_list_state`.
+    let mut state = app.take_list_state(View::Audio);
 
     let [list_area, legend_area] =
         Layout::vertical([Constraint::Min(4), Constraint::Length(3)]).areas(area);
@@ -57,10 +60,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 .fg(theme.highlight_fg)
                 .add_modifier(Modifier::BOLD),
         );
-        let mut state = ListState::default();
         state.select(Some(app.selection(View::Audio)));
         frame.render_stateful_widget(list, inner, &mut state);
     }
+    app.put_list_state(View::Audio, inner, state);
 
     let legend_block = chrome::panel("Scale", false, theme, app.unicode);
     let legend_inner = legend_block.inner(legend_area);

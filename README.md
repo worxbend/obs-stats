@@ -35,7 +35,7 @@ OBS's own stats dock tells you *that* frames were dropped. It does not tell you 
 | 🔔 **Alerts when it matters** | Frames actually being lost raise a dashboard banner *and* a Linux desktop notification — naming the cause, the count, and the fix. |
 | ⏱️ **Per-stream counters** | Drops are measured from the moment the stream started, not since OBS launched — so yesterday's numbers don't hide today's problem. |
 | 🎨 **24 built-in themes** | A btop-style live picker that restyles the whole UI as you move, with `Enter` to keep and `Esc` to revert. |
-| ⌨️ **Keyboard-first** | Vim keys or arrows, digits to jump, mouse optional. Everything reachable without a menu. |
+| ⌨️ **AstroNvim-shaped keymap** | `space` leader with a which-key popup, `:` command line with completion, and a fuzzy palette — plus `gg`, `]b`, `Ctrl-d` where you would expect them. |
 | 🔒 **Secret-safe by design** | The password comes from an environment variable and is never written to config, logs, or error messages. |
 | 🤖 **Scriptable** | `obs-stats once` prints the same numbers as JSON with a stable schema and documented exit codes. |
 | 🦀 **One static binary** | Pure Rust, ratatui + crossterm. No runtime, no daemon, no dependencies. |
@@ -79,7 +79,7 @@ Requires Rust 1.88 or newer (2024 edition; ratatui 0.30 sets the floor).
 
    If you turned authentication off in OBS, skip the export — `obs-stats` connects anonymously.
 
-3. Press `?` for the key reference, `t` for themes, `q` to quit.
+3. Press `space` for the which-key menu, `?` for the key reference, `:` for the command line, `q` to quit.
 
 Watching OBS on another machine:
 
@@ -174,27 +174,64 @@ Full detail, including tuning: [docs/alerts.md](docs/alerts.md).
 
 ## ⌨️ Keys
 
+The keymap is vim-shaped, laid out the way AstroNvim lays one out: `space` is the leader, `:` is a command line, and the usual motions work where a motion makes sense. Every key the app shipped with before still works.
+
+### The leader
+
+`space` opens a which-key popup listing what is reachable from here. Keep typing to go deeper, `Esc` to back out.
+
+<img src="docs/images/whichkey.svg" alt="The which-key popup listing the leader menu over the dashboard" width="880">
+
+| Sequence | Action |
+|---|---|
+| `space f f` | Fuzzy command palette |
+| `space f t` / `space f v` | Palette, filtered to themes / views |
+| `space b` | Views — next, previous, or pick one |
+| `space u` | UI toggles — Unicode, icons, pause, theme |
+| `space p` | Polling — faster, slower, refresh |
+| `space t` · `space r` · `space q` | Theme picker · Refresh · Quit |
+
+### The command line
+
+`:` opens a command line over the status row. `Tab` completes the command and then its argument, `Enter` runs, `↑` walks the history.
+
+<img src="docs/images/command.svg" alt="The command line completing a theme name from a popup above it" width="880">
+
+```
+:theme nord          :view audio          :poll 500
+:colo dracula        :b log               :set poll 500
+```
+
+`:help` `:refresh` `:pause` `:unicode` `:icons` `:quit` round it out, with the vim aliases you would guess — `:q`, `:e`, `:colo`, `:b`. Anything wrong is reported in words: `no such theme: puce`.
+
+### The palette
+
+`space f f` fuzzy-finds over the same registry, plus a row per theme and per view. `ovw` finds `view overview`.
+
+<img src="docs/images/palette.svg" alt="The fuzzy command palette listing themes matching a query" width="880">
+
+### Motions and views
+
 | Key | Action |
 |---|---|
-| `Tab` / `Shift-Tab` | Next / previous view |
+| `Tab` / `Shift-Tab`, `L` / `H`, `] b` / `[ b` | Next / previous view |
 | `→` `←` or `l` `h` | Next / previous view |
 | `1` … `6` | Jump straight to a view |
 | `j` `k` or `↓` `↑` | Move the list cursor |
-| `PgDn` / `PgUp` | Move the cursor a page |
-| `g` / `G` | Jump to top / bottom |
-| `r` | Refresh now |
-| `space` or `p` | Pause / resume the display |
-| `+` / `-` | Poll faster / slower |
-| `t` or `F2` | Theme picker |
-| `u` | Toggle Unicode drawing |
-| `?` or `F1` | Help overlay |
+| `Ctrl-d` / `Ctrl-u` | Half a page down / up |
+| `Ctrl-f` / `Ctrl-b`, `PgDn` / `PgUp` | A page down / up |
+| `g g` / `G` | Jump to top / bottom |
+| `r` · `p` · `+` / `-` | Refresh · Pause · Poll faster / slower |
+| `t` or `F2` · `u` · `?` or `F1` | Theme picker · Unicode · Help |
 | `q`, `Esc`, `Ctrl-C` | Quit |
 
 Pausing freezes the metrics but **not** the connection state — a paused dashboard still tells you when OBS goes away.
 
-Mouse (unless `--no-mouse`): scroll to move a selection, click a tab to switch views.
+### Mouse
 
-Press `?` in the app for the same table, generated from the keymap itself.
+Unless `--no-mouse`: scroll or click a row to move the cursor, drag to sweep through a list, drag the scrollbar to scrub. Click a tab to switch views; click the pause marker, the poll cadence, the theme name or the alert counter in the chrome to act on each. In an overlay, click a row to select and click again to apply — or click outside to dismiss.
+
+Press `?` in the app for the full table, generated from the keymap itself.
 
 <img src="docs/images/help.svg" alt="Help overlay listing views and key bindings" width="820">
 
@@ -302,7 +339,7 @@ One background task owns the socket. It reconnects on its own with backoff, poll
 
 Polling is split by cost. Every tick sends one batched request for `GetStats` + `GetStreamStatus` + `GetRecordStatus`. Every tenth tick adds scenes, inputs, profiles, collections and video settings — things that change on human timescales. Audio levels arrive as `InputVolumeMeters` events rather than being polled at all.
 
-The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 411 tests, no live OBS required.
+The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 526 tests, no live OBS required.
 
 ---
 
@@ -325,7 +362,7 @@ Elsewhere:
 ## 🛠️ Development
 
 ```sh
-cargo test                                  # 411 tests, no OBS needed
+cargo test                                  # 526 tests, no OBS needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run --example screenshot -- --demo    # regenerate docs/images/*.svg

@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::metrics::ConnectionState;
-use crate::tui::app::App;
+use crate::tui::app::{App, Hit};
 use crate::tui::keys::Overlay;
 use crate::tui::theme::Theme;
 use crate::tui::widgets::chrome;
@@ -15,15 +15,61 @@ use crate::tui::widgets::chrome;
 /// Height the status bar occupies.
 pub const HEIGHT: u16 = 1;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let [left, right] =
         Layout::horizontal([Constraint::Min(20), Constraint::Length(28)]).areas(area);
 
-    frame.render_widget(Paragraph::new(hints(app)), left);
-    frame.render_widget(
-        Paragraph::new(state(app)).alignment(Alignment::Right),
-        right,
-    );
+    let hints = hints(app);
+    let (state, targets) = state(app);
+    let hit_rects = right_aligned_rects(&state, &targets, right);
+
+    frame.render_widget(Paragraph::new(hints), left);
+    frame.render_widget(Paragraph::new(state).alignment(Alignment::Right), right);
+
+    app.regions.hits.extend(hit_rects);
+}
+
+/// Where each targeted span lands, given that the line is right-aligned in
+/// `area`.
+///
+/// Right alignment means positions can only be known once the whole line is
+/// built, which is why the spans and their targets are produced together and
+/// measured here rather than at the point each is pushed.
+fn right_aligned_rects(
+    line: &Line<'static>,
+    targets: &[(usize, Hit)],
+    area: Rect,
+) -> Vec<(Rect, Hit)> {
+    let widths: Vec<u16> = line
+        .spans
+        .iter()
+        .map(|span| span.content.chars().count() as u16)
+        .collect();
+    let total: u16 = widths.iter().sum();
+
+    // A line wider than its column is clipped from the left by the alignment,
+    // so there is no honest rect to report for anything in it.
+    if total > area.width {
+        return Vec::new();
+    }
+    let mut cursor = area.x + area.width - total;
+
+    let mut rects = Vec::with_capacity(targets.len());
+    for (index, width) in widths.iter().enumerate() {
+        if let Some((_, hit)) = targets.iter().find(|(target, _)| *target == index) {
+            rects.push((
+                Rect {
+                    x: cursor,
+                    y: area.y,
+                    width: *width,
+                    height: 1,
+                },
+                *hit,
+            ));
+        }
+        cursor += width;
+    }
+    rects
 }
 
 /// Key hints, or the active toast when there is one.
@@ -64,12 +110,16 @@ fn hints(app: &App) -> Line<'static> {
             ("Enter", "apply"),
             ("Esc", "cancel"),
         ],
+        Overlay::Palette => &[(cursor_keys, "move"), ("Enter", "run"), ("Esc", "cancel")],
+        // The command line draws its own row, so these are only reached if it
+        // is somehow open without one.
+        Overlay::Command => &[("Tab", "complete"), ("Enter", "run"), ("Esc", "cancel")],
         Overlay::None => &[
+            ("space", "keys"),
             ("Tab", "view"),
-            ("1-6", "jump"),
             ("r", "refresh"),
-            ("space", "pause"),
-            ("t", "theme"),
+            ("p", "pause"),
+            (":", "command"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -117,32 +167,49 @@ fn problem(reason: &str, hint: Option<&'static str>, theme: &Theme) -> Line<'sta
     Line::from(spans)
 }
 
-/// Right-hand side: paused flag and the poll cadence.
-fn state(app: &App) -> Line<'static> {
+/// Right-hand side: paused flag, poll cadence and theme name.
+///
+/// Returns the spans alongside which of them are click targets, by index. The
+/// row is right-aligned, so the caller works out where they actually land.
+fn state(app: &App) -> (Line<'static>, Vec<(usize, Hit)>) {
     let theme = app.theme;
     let mut spans = Vec::new();
+    let mut targets = Vec::new();
 
+    // The toggle is always present, so there is somewhere to click to pause as
+    // well as to resume. `‖` is General Punctuation rather than one of the
+    // Geometric Shapes `--ascii` avoids, but the fallback is spelt out anyway.
+    targets.push((spans.len(), Hit::Pause));
     if app.paused {
         spans.push(Span::styled(
-            "PAUSED ",
+            "PAUSED",
             Style::default()
                 .fg(theme.highlight_fg)
                 .bg(theme.warning)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::raw(" "));
+    } else {
+        spans.push(Span::styled(
+            if app.unicode { "‖" } else { "||" },
+            Style::default().fg(theme.border),
+        ));
     }
+    spans.push(Span::raw(" "));
 
+    targets.push((spans.len(), Hit::Poll));
     spans.push(Span::styled(
         format!("{}ms", app.poll_interval.as_millis()),
         Style::default().fg(theme.muted),
     ));
+
+    spans.push(Span::styled(" · ", Style::default().fg(theme.border)));
+    targets.push((spans.len(), Hit::ThemeName));
     spans.push(Span::styled(
-        format!(" · {}", app.theme.label),
+        app.theme.label.to_string(),
         Style::default().fg(theme.muted),
     ));
 
-    Line::from(spans)
+    (Line::from(spans), targets)
 }
 
 #[cfg(test)]
@@ -165,7 +232,9 @@ mod tests {
     #[test]
     fn the_dashboard_shows_its_main_keys() {
         let rendered = text(&hints(&app()));
-        for key in ["Tab", "1-6", "r", "space", "t", "?", "q"] {
+        // `space` opens which-key, which is where the rest of the map lives,
+        // and `:` reaches everything by name.
+        for key in ["space", "Tab", "r", "p", ":", "?", "q"] {
             assert!(rendered.contains(key), "missing hint for {key}: {rendered}");
         }
     }
@@ -245,7 +314,8 @@ mod tests {
     #[test]
     fn the_right_side_reports_cadence_and_theme() {
         let app = app();
-        let rendered = text(&state(&app));
+        let (line, _) = state(&app);
+        let rendered = text(&line);
         assert!(rendered.contains("1000ms"));
         assert!(rendered.contains("Claude"));
         assert!(!rendered.contains("PAUSED"));
@@ -255,6 +325,7 @@ mod tests {
     fn pausing_is_flagged_prominently() {
         let mut app = app();
         app.paused = true;
-        assert!(text(&state(&app)).contains("PAUSED"));
+        let (line, _) = state(&app);
+        assert!(text(&line).contains("PAUSED"));
     }
 }

@@ -9,7 +9,9 @@ use ratatui::widgets::{Block, Paragraph, Tabs};
 use crate::tui::app::App;
 use crate::tui::keys::Overlay;
 use crate::tui::view::View;
-use crate::tui::widgets::{banner, header, help, statusbar, themes};
+use crate::tui::widgets::{
+    banner, cmdline, header, help, palette, scrollbar, statusbar, themes, whichkey,
+};
 use crate::tui::{views, widgets::chrome};
 
 /// Height of the tab strip.
@@ -22,6 +24,11 @@ const MIN_CHROME_HEIGHT: u16 = 8;
 /// Draw one frame.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+
+    // Anything clickable has to re-register itself this frame. A rect left
+    // over from the last one would route a click to a widget that is no
+    // longer on screen.
+    app.begin_frame();
 
     // Paint the theme background across the whole terminal first; panels draw
     // over it. `Color::Reset` in the mono theme makes this a no-op.
@@ -57,15 +64,77 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     header::render(frame, header_area, app);
     render_tabs(frame, tabs_area, app);
+    app.regions.tabs = tabs_area;
     banner::render(frame, banner_area, app);
     views::render(frame, body_area, app);
-    statusbar::render(frame, status_area, app);
+    app.regions.body = body_area;
+    render_scrollbar(frame, app);
+
+    // The command line takes the status row rather than floating, so the two
+    // are drawn as alternatives.
+    if app.overlay == Overlay::Command {
+        cmdline::render(frame, area, status_area, app);
+    } else {
+        statusbar::render(frame, status_area, app);
+    }
 
     match app.overlay {
-        Overlay::None => {}
-        Overlay::Help => help::render(frame, area, app),
-        Overlay::Themes => themes::render(frame, area, app),
+        Overlay::None | Overlay::Command => {}
+        Overlay::Help => {
+            let panel = help::render(frame, area, app);
+            app.regions.overlay_panel = Some(panel);
+        }
+        Overlay::Themes => {
+            let mut state = app.take_overlay_list_state();
+            let (panel, list) = themes::render(frame, area, app, &mut state);
+            app.put_overlay_list_state(panel, list, state);
+        }
+        Overlay::Palette => {
+            let mut state = app.take_overlay_list_state();
+            let (panel, list) = palette::render(frame, area, app, &mut state);
+            app.put_overlay_list_state(panel, list, state);
+        }
     }
+
+    // Which-key sits above everything: it is feedback on the key just pressed,
+    // so it must not be buried under whatever that key is about to open.
+    whichkey::render(frame, area, app);
+}
+
+/// Draw the active view's scrollbar over the right border of its list panel.
+///
+/// Nothing is drawn when the whole list fits, so a short list is not decorated
+/// with a bar that cannot move.
+fn render_scrollbar(frame: &mut Frame, app: &mut App) {
+    let Some(list) = app.regions.list else {
+        return;
+    };
+    let total = app.row_count(app.view);
+    if total <= list.height as usize || list.height == 0 {
+        return;
+    }
+
+    // The panel's right border, which the bar replaces rather than eating a
+    // column of content.
+    let track = Rect {
+        x: list.x + list.width,
+        y: list.y,
+        width: 1,
+        height: list.height,
+    };
+    if track.x >= frame.area().right() {
+        return;
+    }
+
+    scrollbar::render(
+        frame,
+        track,
+        total,
+        app.list_offset(app.view),
+        app.theme,
+        app.unicode,
+    );
+    app.regions.scrollbar = Some(track);
 }
 
 fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
@@ -198,11 +267,134 @@ mod tests {
 
     #[test]
     fn overlays_render_in_a_terminal_too_small_to_hold_them() {
-        for overlay in [Overlay::Help, Overlay::Themes] {
-            let mut app = app();
-            app.overlay = overlay;
-            let _ = render(&mut app, 30, 10);
+        for overlay in ALL_OVERLAYS {
+            for (width, height) in [(30, 10), (20, 8), (12, 4)] {
+                let mut app = opened(overlay);
+                let _ = render(&mut app, width, height);
+            }
         }
+    }
+
+    /// Every modal layer, so the sweeps below cannot miss a new one.
+    const ALL_OVERLAYS: [Overlay; 5] = [
+        Overlay::None,
+        Overlay::Help,
+        Overlay::Themes,
+        Overlay::Command,
+        Overlay::Palette,
+    ];
+
+    /// An app with `overlay` opened the way a key would open it, so the
+    /// overlay's own state is populated rather than left at its default.
+    fn opened(overlay: Overlay) -> App {
+        use crate::tui::keys::Action;
+        use std::time::Instant;
+
+        let mut app = app();
+        let now = Instant::now();
+        match overlay {
+            Overlay::None => {}
+            Overlay::Help => {
+                app.handle(Action::ToggleHelp, now);
+            }
+            Overlay::Themes => {
+                app.handle(Action::ToggleThemePicker, now);
+            }
+            Overlay::Command => {
+                app.handle(Action::OpenCommandLine, now);
+                for c in "theme no".chars() {
+                    app.handle(Action::Input(c), now);
+                }
+            }
+            Overlay::Palette => {
+                app.handle(Action::OpenPalette, now);
+                for c in "the".chars() {
+                    app.handle(Action::Input(c), now);
+                }
+            }
+        }
+        assert_eq!(app.overlay, overlay);
+        app
+    }
+
+    #[test]
+    fn the_command_line_takes_the_status_row() {
+        let mut app = opened(Overlay::Command);
+        let rendered = render(&mut app, 120, 40);
+        assert!(rendered.contains(":theme no"), "{rendered}");
+        // The hints it replaces must not also be on screen.
+        assert!(!rendered.contains("q quit"));
+    }
+
+    #[test]
+    fn the_palette_draws_over_the_dashboard() {
+        let mut app = opened(Overlay::Palette);
+        let rendered = render(&mut app, 120, 40);
+        assert!(rendered.contains("Commands"));
+        assert!(rendered.contains("theme"));
+    }
+
+    #[test]
+    fn a_pending_key_sequence_puts_which_key_on_screen() {
+        use crate::tui::keys::Pending;
+
+        let mut app = app();
+        let quiet = render(&mut app, 120, 40);
+        assert!(!quiet.contains("+UI toggles"));
+
+        app.pending = Pending::Leader;
+        let rendered = render(&mut app, 120, 40);
+        assert!(rendered.contains("+UI toggles"), "{rendered}");
+        assert!(rendered.contains("Quit"));
+    }
+
+    #[test]
+    fn which_key_draws_above_whatever_else_is_open() {
+        use crate::tui::keys::Pending;
+
+        // It is feedback on the key just pressed, so being buried under an
+        // overlay would make it useless exactly when it is needed.
+        for overlay in ALL_OVERLAYS {
+            let mut app = opened(overlay);
+            app.pending = Pending::LeaderGroup('u');
+            let rendered = render(&mut app, 120, 40);
+            assert!(
+                rendered.contains("Unicode drawing"),
+                "{overlay:?} hid the which-key popup:\n{rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_list_draws_a_scrollbar_and_a_short_one_does_not() {
+        use crate::metrics::LogEntry;
+        use crate::obs::client::LogLevel;
+        use std::time::Duration;
+
+        let mut app = app();
+        app.view = View::Log;
+        app.snapshot.log = (0..3)
+            .map(|index| LogEntry {
+                level: LogLevel::Info,
+                message: format!("event {index}"),
+                at: Duration::from_secs(index),
+            })
+            .collect();
+        let _ = render(&mut app, 120, 40);
+        assert!(app.regions.scrollbar.is_none(), "three rows always fit");
+
+        app.snapshot.log = (0..500)
+            .map(|index| LogEntry {
+                level: LogLevel::Info,
+                message: format!("event {index}"),
+                at: Duration::from_secs(index),
+            })
+            .collect();
+        let _ = render(&mut app, 120, 40);
+        let track = app.regions.scrollbar.expect("500 rows must scroll");
+        let list = app.regions.list.unwrap();
+        assert_eq!(track.height, list.height);
+        assert_eq!(track.x, list.x + list.width, "the bar sits on the border");
     }
 
     /// Populate a snapshot enough that charts, meters and lists all draw.
@@ -268,31 +460,46 @@ mod tests {
             "this test needs a theme with a concrete background"
         );
 
+        // Every view crossed with every overlay and the which-key popup: each
+        // of those draws a `Clear`, which is the exact widget that reintroduces
+        // this bug if whatever follows it does not repaint the background.
         for view in View::ALL {
-            let mut app = App::new(config.clone());
-            app.view = view;
-            populated(&mut app);
-            with_banner(&mut app, crate::metrics::AlertKind::NetworkDropped);
+            for overlay in ALL_OVERLAYS {
+                for pending in [
+                    crate::tui::keys::Pending::None,
+                    crate::tui::keys::Pending::Leader,
+                ] {
+                    let mut app = opened(overlay);
+                    app.config = config.clone();
+                    app.theme = theme;
+                    app.view = view;
+                    app.pending = pending;
+                    populated(&mut app);
+                    with_banner(&mut app, crate::metrics::AlertKind::NetworkDropped);
 
-            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-            let buffer = terminal.backend().buffer().clone();
+                    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+                    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+                    let buffer = terminal.backend().buffer().clone();
 
-            for y in 0..buffer.area.height {
-                for x in 0..buffer.area.width {
-                    let bg = buffer[(x, y)].bg;
-                    // Three deliberate departures from the page background: a
-                    // selected row's highlight, and the alert banner's bar,
-                    // which is coloured by severity on purpose.
-                    assert!(
-                        bg == theme.bg
-                            || bg == theme.highlight_bg
-                            || bg == theme.danger
-                            || bg == theme.warning,
-                        "{} leaves cell ({x},{y}) on {bg:?} — the terminal's own background \
-                         shows through wherever this is not the theme's",
-                        view.id()
-                    );
+                    for y in 0..buffer.area.height {
+                        for x in 0..buffer.area.width {
+                            let bg = buffer[(x, y)].bg;
+                            // Three deliberate departures from the page
+                            // background: a selected row's highlight, and the
+                            // alert banner's bar, which is coloured by
+                            // severity on purpose.
+                            assert!(
+                                bg == theme.bg
+                                    || bg == theme.highlight_bg
+                                    || bg == theme.danger
+                                    || bg == theme.warning,
+                                "{}/{overlay:?}/{pending:?} leaves cell ({x},{y}) on {bg:?} — \
+                                 the terminal's own background shows through wherever this is \
+                                 not the theme's",
+                                view.id()
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -426,13 +633,16 @@ mod tests {
     #[test]
     fn ascii_mode_emits_no_drawing_glyphs_in_any_view_or_overlay() {
         for view in View::ALL {
-            for overlay in [Overlay::None, Overlay::Help, Overlay::Themes] {
+            for overlay in ALL_OVERLAYS {
                 let mut config = Config::default();
                 config.ui.unicode = false;
                 config.ui.show_icons = false;
                 let mut app = App::new(config);
                 app.view = view;
                 app.overlay = overlay;
+                // A pending sequence puts the which-key popup on screen too,
+                // so its glyphs are swept along with everything else.
+                app.pending = crate::tui::keys::Pending::Leader;
                 // Populate enough state that the data paths render too, not
                 // just the empty-state placeholders.
                 app.snapshot.version.obs_version = "31.0.2".into();

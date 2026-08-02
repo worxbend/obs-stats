@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::metrics::{ConnectionState, Snapshot};
-use crate::tui::app::App;
+use crate::tui::app::{App, Hit};
 use crate::tui::theme::Theme;
 use crate::tui::widgets::chrome;
 use crate::{APP_NAME, util};
@@ -15,17 +15,22 @@ use crate::{APP_NAME, util};
 /// Height the header occupies, including its rule.
 pub const HEIGHT: u16 = 2;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let [top, rule] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
 
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(top);
 
-    frame.render_widget(Paragraph::new(identity(app)), left);
-    frame.render_widget(
-        Paragraph::new(status(app)).alignment(Alignment::Right),
-        right,
-    );
+    let identity = identity(app);
+    let (status, alert_span) = status_with_targets(app);
+    let alert_rect = alert_span.and_then(|index| span_rect(&status, index, right));
+
+    frame.render_widget(Paragraph::new(identity), left);
+    frame.render_widget(Paragraph::new(status).alignment(Alignment::Right), right);
+
+    if let Some(rect) = alert_rect {
+        app.regions.hits.push((rect, Hit::Alerts));
+    }
 
     let glyphs = chrome::glyphs(app.unicode);
     let divider = if app.unicode { "─" } else { "-" };
@@ -78,6 +83,45 @@ fn identity(app: &App) -> Line<'static> {
     }
 
     Line::from(spans)
+}
+
+/// Where the span at `index` lands in a right-aligned `area`.
+///
+/// `None` when the line is wider than its column: the alignment clips it from
+/// the left, so no reported position would be true.
+fn span_rect(line: &Line<'static>, index: usize, area: Rect) -> Option<Rect> {
+    let widths: Vec<u16> = line
+        .spans
+        .iter()
+        .map(|span| span.content.chars().count() as u16)
+        .collect();
+    let total: u16 = widths.iter().sum();
+    if total > area.width || index >= widths.len() {
+        return None;
+    }
+    let x = area.x + area.width - total + widths[..index].iter().sum::<u16>();
+    Some(Rect {
+        x,
+        y: area.y,
+        width: widths[index],
+        height: 1,
+    })
+}
+
+/// The status line, with the alert counter's span index when one is shown.
+fn status_with_targets(app: &App) -> (Line<'static>, Option<usize>) {
+    let line = status(app);
+    // The counter is the only clickable piece, and it is followed by a
+    // separator dot, so it is the span before the last dot when present.
+    if app.alert_count == 0 {
+        return (line, None);
+    }
+    let marker = if app.unicode { "▲" } else { "!" };
+    let index = line
+        .spans
+        .iter()
+        .position(|span| span.content.starts_with(marker));
+    (line, index)
 }
 
 /// Right-hand side: live badges, then the connection chip.

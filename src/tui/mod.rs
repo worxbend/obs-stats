@@ -7,6 +7,7 @@
 //! are testable without a TTY.
 
 pub mod app;
+pub mod command;
 pub mod keys;
 pub mod run;
 pub mod theme;

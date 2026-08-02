@@ -24,7 +24,7 @@ use obs_stats::obs::stats::{
     AudioInput, RecordStatus, Scene, SceneList, Stats, StreamStatus, Version, VideoSettings,
 };
 use obs_stats::tui::app::App;
-use obs_stats::tui::keys::Overlay;
+use obs_stats::tui::keys::{Action, Overlay, Pending};
 use obs_stats::tui::theme::{self, Theme};
 use obs_stats::tui::ui;
 use obs_stats::tui::view::View;
@@ -64,71 +64,93 @@ struct Shot {
     theme: &'static str,
     /// Show a frame-loss banner, for the alerts documentation.
     alert: Option<AlertKind>,
+    /// A key sequence part-way through, which puts which-key on screen.
+    pending: Pending,
+    /// Text typed into the command line or the palette, whichever is open.
+    typed: &'static str,
 }
+
+/// The defaults every shot starts from, so each entry below only states what
+/// makes it different.
+const PLAIN: Shot = Shot {
+    name: "",
+    view: View::Overview,
+    overlay: Overlay::None,
+    theme: "claude",
+    alert: None,
+    pending: Pending::None,
+    typed: "",
+};
 
 const SHOTS: &[Shot] = &[
     Shot {
         name: "overview",
-        view: View::Overview,
-        overlay: Overlay::None,
-        theme: "claude",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "performance",
         view: View::Performance,
-        overlay: Overlay::None,
-        theme: "claude",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "stream",
         view: View::Stream,
-        overlay: Overlay::None,
         theme: "tokyo-night",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "scenes",
         view: View::Scenes,
-        overlay: Overlay::None,
         theme: "nord",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "audio",
         view: View::Audio,
-        overlay: Overlay::None,
         theme: "gruvbox",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "log",
         view: View::Log,
-        overlay: Overlay::None,
         theme: "catppuccin-mocha",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "themes",
-        view: View::Overview,
         overlay: Overlay::Themes,
         theme: "dracula",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "help",
-        view: View::Overview,
         overlay: Overlay::Help,
-        theme: "claude",
-        alert: None,
+        ..PLAIN
     },
     Shot {
         name: "alert",
         view: View::Stream,
-        overlay: Overlay::None,
-        theme: "claude",
         alert: Some(AlertKind::NetworkDropped),
+        ..PLAIN
+    },
+    Shot {
+        name: "whichkey",
+        pending: Pending::Leader,
+        ..PLAIN
+    },
+    Shot {
+        name: "palette",
+        overlay: Overlay::Palette,
+        theme: "tokyo-night",
+        typed: "the",
+        ..PLAIN
+    },
+    Shot {
+        name: "command",
+        overlay: Overlay::Command,
+        theme: "nord",
+        typed: "theme no",
+        ..PLAIN
     },
 ];
 
@@ -192,7 +214,23 @@ fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
     let mut app = App::new(config);
     app.snapshot = snapshot.clone();
     app.view = shot.view;
-    app.overlay = shot.overlay;
+
+    // The text overlays are opened through the same actions a key would use,
+    // so their state is real rather than an empty struct that happens to draw.
+    let at = Instant::now();
+    match shot.overlay {
+        Overlay::Palette => {
+            app.handle(Action::OpenPalette, at);
+        }
+        Overlay::Command => {
+            app.handle(Action::OpenCommandLine, at);
+        }
+        other => app.overlay = other,
+    }
+    for c in shot.typed.chars() {
+        app.handle(Action::Input(c), at);
+    }
+    app.pending = shot.pending;
     // A fixed frame number keeps the blinking LIVE badge lit, so regenerating
     // the screenshots produces byte-identical output.
     app.frame = 3;

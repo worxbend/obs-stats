@@ -17,7 +17,9 @@ use crate::tui::widgets::chrome;
 /// Rows of themes shown at once, before the list scrolls.
 const VISIBLE_ROWS: u16 = 12;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &App) {
+/// Draw the picker, returning the panel and the row list so a click can be
+/// resolved against them.
+pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -> (Rect, Rect) {
     // +2 border, +2 for the footer hint and its spacer.
     let height = (VISIBLE_ROWS + 4).min(area.height);
     let region = chrome::centered(area, 52.min(area.width), height);
@@ -36,7 +38,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, region);
 
     if inner.height == 0 {
-        return;
+        return (region, inner);
     }
 
     // Reserve the last row for the footer, but only if there is room for a
@@ -59,9 +61,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let mut state = ListState::default();
     state.select(Some(app.theme_cursor));
-    frame.render_stateful_widget(list, list_area, &mut state);
+    frame.render_stateful_widget(list, list_area, state);
 
     if footer_height == 1 {
         let footer = Rect {
@@ -77,6 +78,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             footer,
         );
     }
+
+    (region, list_area)
 }
 
 /// One picker row: swatches, then the label.

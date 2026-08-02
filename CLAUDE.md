@@ -9,7 +9,8 @@ src/
   obs/        obs-websocket 5.x: protocol, auth, session task, typed payloads
   metrics/    Snapshot (the model), History (ring buffers), alerts, derived rates
   config/     YAML schema, XDG paths, loading, secret resolution
-  tui/        app (state machine), keys (keymap), views/, widgets/, run (terminal)
+  tui/        app (state machine), keys (keymap), command (`:` registry),
+              views/, widgets/, run (terminal)
   notify.rs   desktop notifications, on their own thread
   probe.rs    one-shot collection, shared by `once` and the screenshot generator
   cli.rs      clap definitions and flag→config layering
@@ -25,6 +26,24 @@ The layers only depend downward: `obs` → `metrics` → `tui`. Keep it that way
 returning an optional `Command` for the session task. Only `tui::run` touches
 the terminal. This is what makes the whole interaction model testable without a
 TTY, and it is why the render loop can never block on OBS.
+
+**The keymap stays a pure function.** `keys::resolve` is
+`(overlay, pending, key) → Resolution`, with no access to app state. Multi-key
+sequences — `<leader>uu`, `gg`, `]b` — work by threading the pending prefix *in*
+rather than by holding it in the keymap. Keep it that way: it is what lets the
+whole sequence machine be tested without a terminal, and it is why the which-key
+popup and the help overlay can both be generated from `LEADER_MAP` and
+`BINDINGS` without drifting from what the keys actually do.
+
+**One registry behind `:` and the palette.** `tui::command::COMMANDS` is the
+only place a command is defined. The `:` line parses against it and the fuzzy
+palette flattens it. A test asserts every completion Tab can produce is a line
+Enter can run, so completion can never hand the user something that errors.
+
+**Click regions are re-registered every frame.** `App::begin_frame` clears
+`Regions`, and each widget records where it drew. A rect that survived into a
+frame where its widget did not draw would route clicks to something invisible.
+Recording geometry is not I/O, so this stays in `app` where it is testable.
 
 **The session task owns the socket.** It reconnects with backoff, polls on a
 timer, and pushes `Update`s. The UI never awaits a round trip. A hung OBS must
@@ -51,7 +70,7 @@ row's mute marker are both covered by tests that assert this.
 
 ## Testing
 
-`cargo test` — 411 tests, no terminal and no live OBS required. The TUI is
+`cargo test` — 526 tests, no terminal and no live OBS required. The TUI is
 exercised through ratatui's `TestBackend`; the client through synthetic
 `Update`s. Rendering tests cover every view × every theme, plus cramped
 terminals, so a layout that underflows is caught.
@@ -85,11 +104,16 @@ layout change; add `--ascii` to inspect the fallback rendering.
 background still looks correct in `docs/images` while exposing the terminal's
 wallpaper in a real session — which is exactly how ratatui's `Chart` shipped a
 transparent plot area in v0.1.1. `no_widget_punches_a_hole_in_the_themed_background`
-asserts on the cell buffer instead, which is the ground truth.
+asserts on the cell buffer instead, which is the ground truth. It sweeps every
+view × overlay × pending prefix, because `Clear` — which every overlay draws —
+resets the cells it covers, and whatever follows it has to repaint the
+background. That is how the `:` command line briefly shipped a transparent
+status row.
 
-Note that ratatui's `Chart` and `Sparkline` have no ASCII mode — their axes are
-box-drawing and their series braille or block elements — so `views::ascii_plot`
-and `views::ascii_bars` stand in for them. A rendering test walks every view ×
+Note that ratatui's `Chart`, `Sparkline` and `Scrollbar` have no ASCII mode —
+their axes and tracks are box-drawing and their series braille, block elements
+or arrows — so `views::ascii_plot`, `views::ascii_bars` and
+`widgets::scrollbar` stand in for them. A rendering test walks every view ×
 overlay in ASCII mode and fails on any Arrows / Box Drawing / Block Elements /
 Geometric Shapes / emoji codepoint, so this cannot silently regress.
 

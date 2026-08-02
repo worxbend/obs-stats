@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, Paragraph};
 
 use crate::metrics::Snapshot;
 use crate::tui::app::App;
@@ -20,6 +20,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // Register the row count before taking a shared borrow of the snapshot,
     // so the cursor is clamped against the list we are about to draw.
     app.set_row_count(View::Scenes, app.snapshot.scenes.scenes.len());
+    // The scroll state lives in the app so the offset the list settles on
+    // survives the frame, which is what a click and the scrollbar resolve
+    // against. It is taken out rather than borrowed because the rows below
+    // hold a shared borrow of the snapshot.
+    let mut state = app.take_list_state(View::Scenes);
 
     let theme = app.theme;
     let selected = app.selection(View::Scenes);
@@ -66,11 +71,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 .fg(theme.highlight_fg)
                 .add_modifier(Modifier::BOLD),
         );
-        let mut state = ListState::default();
         state.select(Some(selected));
         frame.render_stateful_widget(list, inner, &mut state);
     }
 
+    app.put_list_state(View::Scenes, inner, state);
     render_context(frame, side, app);
 }
 

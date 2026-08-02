@@ -6,8 +6,12 @@
 
 pub mod banner;
 pub mod chrome;
+pub mod cmdline;
 pub mod header;
 pub mod help;
 pub mod meter;
+pub mod palette;
+pub mod scrollbar;
 pub mod statusbar;
 pub mod themes;
+pub mod whichkey;
