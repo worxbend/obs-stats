@@ -13,7 +13,7 @@ Watch CPU, frame pacing, encoder health, outputs, scenes and audio — live, fro
 [![Ratatui](https://img.shields.io/badge/TUI-ratatui-7BA9C7?style=for-the-badge&labelColor=1B1916)](https://ratatui.rs)
 [![obs-websocket 5.x](https://img.shields.io/badge/obs--websocket-5.x-E0B44C?style=for-the-badge&labelColor=1B1916)](https://github.com/obsproject/obs-websocket)
 
-[Install](#-install) · [Quick start](#-quick-start) · [Views](#-the-views) · [Keys](#-keys) · [Themes](#-themes) · [Config](#-configuration) · [Site](https://worxbend.github.io/obs-stats/)
+[Install](#-install) · [Quick start](#-quick-start) · [Views](#-the-views) · [Keys](#-keys) · [Themes](#-themes) · [Config](#-configuration) · [Site](https://worxbend.github.io/obs-stats/) · [Tools map](https://obs.worxbend.com/)
 
 <img src="docs/images/overview.svg" alt="obs-stats overview: system, video and health cards over live stream and recording panels and a bitrate chart" width="900">
 
@@ -314,6 +314,11 @@ The layers are separable and separately tested: `obs` (protocol) → `metrics` (
 - [Key bindings](docs/keybindings.md)
 - [Themes](docs/themes.md)
 - [Troubleshooting](docs/troubleshooting.md)
+
+Elsewhere:
+
+- [Project site](https://worxbend.github.io/obs-stats/) — the docs above, rendered
+- [obs.worxbend.com](https://obs.worxbend.com/) — the wider worxbend streaming toolkit, and where `obs-stats` sits in a two-machine OBS setup
 
 ---
 
