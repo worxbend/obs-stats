@@ -117,6 +117,36 @@ pub fn contains(rect: Rect, column: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
+/// Everything one view remembers about its list between frames.
+///
+/// Each view scrolls independently — switching tabs and coming back must
+/// land where you left off — so these four values exist once per view. They
+/// were previously four parallel arrays indexed by [`View::index`], which
+/// meant every read had to index all of them in step and nothing stopped a
+/// cursor from being paired with another view's row count.
+#[derive(Debug, Default, Clone)]
+struct ViewState {
+    /// Cursor position.
+    selection: usize,
+    /// How many rows the list last rendered, so paging knows its step and
+    /// `End` knows where the bottom is.
+    row_count: usize,
+    /// How many rows were actually on screen, for paging and for mapping a
+    /// click to a row.
+    visible_rows: usize,
+    /// Scroll state, owned here so the rendered offset survives the frame and
+    /// a click can be resolved against it.
+    list: ListState,
+}
+
+impl ViewState {
+    /// Pull the cursor back inside the list, which may have shrunk since the
+    /// last frame. An empty list parks it at 0.
+    fn clamp(&mut self) {
+        self.selection = self.selection.min(self.row_count.saturating_sub(1));
+    }
+}
+
 /// The `:` command line.
 #[derive(Debug, Default, Clone)]
 pub struct CommandLine {
@@ -269,17 +299,8 @@ pub struct App {
     /// screenshot generator can pin it: the docs images would otherwise drift
     /// on every release bump, and CI's no-drift check would fail every time.
     pub version: String,
-    /// Cursor position per view, indexed by [`View::index`].
-    selection: [usize; View::ALL.len()],
-    /// How many rows the focused list last rendered, so paging knows its step
-    /// and `End` knows where the bottom is.
-    row_counts: [usize; View::ALL.len()],
-    /// How many rows of each list were actually on screen, for paging and for
-    /// mapping a click to a row.
-    visible_rows: [usize; View::ALL.len()],
-    /// Scroll state per view, owned here so the rendered offset survives the
-    /// frame and a click can be resolved against it.
-    list_states: [ListState; View::ALL.len()],
+    /// Per-view list state, indexed by [`View::index`].
+    views: [ViewState; View::ALL.len()],
     /// The same, for whichever overlay is open — only ever one at a time.
     overlay_list_state: ListState,
     /// Cursor in the theme picker.
@@ -320,10 +341,7 @@ impl App {
             should_quit: false,
             frame: 0,
             version: crate::VERSION.to_string(),
-            selection: [0; View::ALL.len()],
-            row_counts: [0; View::ALL.len()],
-            visible_rows: [0; View::ALL.len()],
-            list_states: Default::default(),
+            views: Default::default(),
             overlay_list_state: ListState::default(),
             theme_cursor: theme::index_of(&config.ui.theme),
             theme_before_preview: theme,
@@ -596,26 +614,34 @@ impl App {
         }
     }
 
+    fn view_state(&self, view: View) -> &ViewState {
+        &self.views[view.index()]
+    }
+
+    fn view_state_mut(&mut self, view: View) -> &mut ViewState {
+        &mut self.views[view.index()]
+    }
+
     /// Tell the app how many rows the focused list drew, so paging and `End`
     /// have something real to clamp against.
     pub fn set_row_count(&mut self, view: View, rows: usize) {
-        self.row_counts[view.index()] = rows;
+        self.view_state_mut(view).row_count = rows;
         self.clamp_selection();
     }
 
     /// Cursor position for `view`, already clamped to its row count.
     pub fn selection(&self, view: View) -> usize {
-        let rows = self.row_counts[view.index()];
-        if rows == 0 {
+        let state = self.view_state(view);
+        if state.row_count == 0 {
             0
         } else {
-            self.selection[view.index()].min(rows - 1)
+            state.selection.min(state.row_count - 1)
         }
     }
 
     /// Rows in `view`'s list, as of the last frame.
     pub fn row_count(&self, view: View) -> usize {
-        self.row_counts[view.index()]
+        self.view_state(view).row_count
     }
 
     /// Borrow `view`'s scroll state so a list widget can advance it.
@@ -624,22 +650,23 @@ impl App {
     /// a shared borrow of the snapshot while they build their rows, which a
     /// simultaneous `&mut self` would conflict with.
     pub fn take_list_state(&mut self, view: View) -> ListState {
-        std::mem::take(&mut self.list_states[view.index()])
+        std::mem::take(&mut self.view_state_mut(view).list)
     }
 
     /// Hand back the state from [`App::take_list_state`], recording where the
     /// list was drawn so a click can be resolved against it.
     pub fn put_list_state(&mut self, view: View, area: Rect, state: ListState) {
-        self.visible_rows[view.index()] = area.height as usize;
         if view == self.view {
             self.regions.list = Some(area);
         }
-        self.list_states[view.index()] = state;
+        let target = self.view_state_mut(view);
+        target.visible_rows = area.height as usize;
+        target.list = state;
     }
 
     /// The first row of `view`'s list that was on screen last frame.
     pub fn list_offset(&self, view: View) -> usize {
-        self.list_states[view.index()].offset()
+        self.view_state(view).list.offset()
     }
 
     /// Borrow the open overlay's scroll state, as [`App::take_list_state`].
@@ -670,11 +697,13 @@ impl App {
         if row < area.y || row >= area.y + area.height {
             return false;
         }
+        // Read the offset before taking the mutable borrow below.
         let index = self.list_offset(self.view) + (row - area.y) as usize;
-        if index >= self.row_counts[self.view.index()] {
+        let state = self.view_state_mut(self.view);
+        if index >= state.row_count {
             return false;
         }
-        self.selection[self.view.index()] = index;
+        state.selection = index;
         true
     }
 
@@ -683,11 +712,11 @@ impl App {
     /// Used by the scrollbar, where the target row comes from geometry rather
     /// than from a relative move.
     pub fn select_row(&mut self, index: usize) {
-        let rows = self.row_counts[self.view.index()];
-        if rows == 0 {
+        let state = self.view_state_mut(self.view);
+        if state.row_count == 0 {
             return;
         }
-        self.selection[self.view.index()] = index.min(rows - 1);
+        state.selection = index.min(state.row_count - 1);
     }
 
     /// Move the overlay's cursor to the row at terminal `row`.
@@ -846,14 +875,14 @@ impl App {
         match self.overlay {
             Overlay::Themes => theme::THEMES.len(),
             Overlay::Palette => self.palette.matches.len(),
-            _ if self.view.is_scrollable() => self.row_counts[self.view.index()],
+            _ if self.view.is_scrollable() => self.view_state(self.view).row_count,
             _ => 0,
         }
     }
 
     /// How far a page key moves, taken from what was actually on screen.
     fn page_step(&self) -> usize {
-        let rows = self.visible_rows[self.view.index()];
+        let rows = self.view_state(self.view).visible_rows;
         if self.overlay == Overlay::None && rows > 1 {
             rows - 1
         } else {
@@ -899,17 +928,13 @@ impl App {
                 self.theme = self.previewed_theme();
             }
             Overlay::Palette => self.palette.cursor = position,
-            _ => self.selection[self.view.index()] = position,
+            _ => self.view_state_mut(self.view).selection = position,
         }
     }
 
     fn clamp_selection(&mut self) {
-        for (index, rows) in self.row_counts.iter().enumerate() {
-            if *rows == 0 {
-                self.selection[index] = 0;
-            } else {
-                self.selection[index] = self.selection[index].min(rows - 1);
-            }
+        for state in &mut self.views {
+            state.clamp();
         }
         self.theme_cursor = self.theme_cursor.min(theme::THEMES.len() - 1);
     }
