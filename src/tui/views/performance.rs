@@ -13,6 +13,7 @@ use ratatui::widgets::Paragraph;
 use crate::metrics::Snapshot;
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::tui::views::loss::Loss;
 use crate::tui::views::{NARROW_WIDTH, axis_count, axis_millis, bar_width, line_chart};
 use crate::tui::widgets::chrome;
 use crate::util;
@@ -110,23 +111,22 @@ pub fn counter_rows(
     unicode: bool,
 ) -> Vec<Line<'static>> {
     let width = bar_width(bar_span, LABEL_WIDTH, 18);
-    let render_skip = snapshot.session_render_skip_percent();
-    let output_skip = snapshot.session_output_skip_percent();
-    let network_drop = snapshot.stream.drop_percent();
+    let render_skip = Loss::render_skip(snapshot);
+    let output_skip = Loss::output_skip(snapshot);
+    let network_drop = Loss::network_drop(&snapshot.stream);
 
     vec![
         chrome::gauge_row(
             "Renderer skipped",
+            // Deliberately not just `render_skip.ratio()`: the renderer gauge
+            // also reflects how far FPS has fallen below target, so it fills
+            // even when nothing has been counted as skipped yet.
             snapshot
                 .fps_ratio()
                 .mul_add(-1.0, 1.0)
-                .max(render_skip / 100.0),
-            format!(
-                "{} ({})",
-                snapshot.session_render_skipped(),
-                util::percent(render_skip)
-            ),
-            theme.color_when_high(render_skip, 0.5, 2.0),
+                .max(render_skip.ratio()),
+            render_skip.text(),
+            render_skip.color(theme),
             LABEL_WIDTH,
             width,
             theme,
@@ -134,13 +134,9 @@ pub fn counter_rows(
         ),
         chrome::gauge_row(
             "Encoder skipped",
-            output_skip / 100.0,
-            format!(
-                "{} ({})",
-                snapshot.session_output_skipped(),
-                util::percent(output_skip)
-            ),
-            theme.color_when_high(output_skip, 0.5, 1.0),
+            output_skip.ratio(),
+            output_skip.text(),
+            output_skip.color(theme),
             LABEL_WIDTH,
             width,
             theme,
@@ -148,13 +144,9 @@ pub fn counter_rows(
         ),
         chrome::gauge_row(
             "Network dropped",
-            network_drop / 100.0,
-            format!(
-                "{} ({})",
-                snapshot.stream.skipped_frames,
-                util::percent(network_drop)
-            ),
-            theme.color_when_high(network_drop, 0.1, 1.0),
+            network_drop.ratio(),
+            network_drop.text(),
+            network_drop.color(theme),
             LABEL_WIDTH,
             width,
             theme,

@@ -13,6 +13,7 @@ use crate::metrics::{Health, Snapshot};
 use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::tui::views::loss::Loss;
 use crate::tui::views::{NARROW_WIDTH, axis_bitrate, bar_width, line_chart, sparkline, verdict};
 use crate::tui::widgets::chrome;
 use crate::util;
@@ -259,37 +260,28 @@ fn health_card(frame: &mut Frame, area: Rect, app: &App) {
 /// Extracted so the wording and colouring can be asserted on directly.
 pub fn health_rows(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
     let congestion = snapshot.stream.congestion_percent();
+    let dropped = Loss::network_drop(&snapshot.stream);
+    let render_skip = Loss::render_skip(snapshot);
+    let output_skip = Loss::output_skip(snapshot);
     vec![
         chrome::row(
             "DROPPED",
-            format!(
-                "{} ({})",
-                snapshot.stream.skipped_frames,
-                util::percent(snapshot.stream.drop_percent())
-            ),
-            theme.color_when_high(snapshot.stream.drop_percent(), 0.1, 1.0),
+            dropped.text(),
+            dropped.color(theme),
             LABEL_WIDTH + 2,
             theme,
         ),
         chrome::row(
             "SKIPPED",
-            format!(
-                "{} ({})",
-                snapshot.session_render_skipped(),
-                util::percent(snapshot.session_render_skip_percent())
-            ),
-            theme.color_when_high(snapshot.session_render_skip_percent(), 0.5, 2.0),
+            render_skip.text(),
+            render_skip.color(theme),
             LABEL_WIDTH + 2,
             theme,
         ),
         chrome::row(
             "ENCODER",
-            format!(
-                "{} ({})",
-                snapshot.session_output_skipped(),
-                util::percent(snapshot.session_output_skip_percent())
-            ),
-            theme.color_when_high(snapshot.session_output_skip_percent(), 0.5, 1.0),
+            output_skip.text(),
+            output_skip.color(theme),
             LABEL_WIDTH + 2,
             theme,
         ),
@@ -377,7 +369,7 @@ pub fn stream_rows(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
                 "{} sent, {} dropped",
                 snapshot.stream.total_frames, snapshot.stream.skipped_frames
             ),
-            theme.color_when_high(snapshot.stream.drop_percent(), 0.1, 1.0),
+            Loss::network_drop(&snapshot.stream).color(theme),
             LABEL_WIDTH + 2,
             theme,
         ),

@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod log;
+pub mod loss;
 pub mod overview;
 pub mod performance;
 pub mod scenes;

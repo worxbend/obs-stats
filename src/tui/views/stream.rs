@@ -9,6 +9,7 @@ use crate::metrics::Snapshot;
 use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::tui::views::loss::Loss;
 use crate::tui::views::{NARROW_WIDTH, axis_bitrate, axis_percent, line_chart};
 use crate::tui::widgets::chrome;
 use crate::util;
@@ -87,6 +88,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 /// Every field of `GetStreamStatus`, plus what we derive from it.
 pub fn stream_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
     let stream = &snapshot.stream;
+    let dropped = Loss::network_drop(stream);
     let state = if stream.reconnecting {
         ("reconnecting", theme.warning)
     } else if stream.active {
@@ -139,12 +141,8 @@ pub fn stream_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
         ),
         chrome::row(
             "Dropped",
-            format!(
-                "{} ({})",
-                stream.skipped_frames,
-                util::percent(stream.drop_percent())
-            ),
-            theme.color_when_high(stream.drop_percent(), 0.1, 1.0),
+            dropped.text(),
+            dropped.color(theme),
             LABEL_WIDTH,
             theme,
         ),
