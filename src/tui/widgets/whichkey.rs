@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::tui::app::App;
 use crate::tui::keys::{self, Entry};
@@ -43,17 +43,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Option<Rect> {
         height,
     };
 
-    frame.render_widget(Clear, region);
     let block = chrome::panel_with_note(
         title,
         format!("{}", entries.len()),
         true,
         app.theme,
         app.unicode,
-    )
-    .style(Style::default().bg(app.theme.bg));
-    let inner = block.inner(region);
-    frame.render_widget(block, region);
+    );
+    let inner = chrome::popup(frame, region, block, app.theme);
 
     if inner.height > 0 {
         frame.render_widget(

@@ -44,8 +44,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         theme,
         app.unicode,
     );
-    let fps_inner = fps_block.inner(chart_regions[0]);
-    frame.render_widget(fps_block, chart_regions[0]);
+    let fps_inner = chrome::frame_panel(frame, chart_regions[0], fps_block);
     line_chart(
         frame,
         fps_inner,
@@ -70,8 +69,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         theme,
         app.unicode,
     );
-    let render_inner = render_block.inner(chart_regions[1]);
-    frame.render_widget(render_block, chart_regions[1]);
+    let render_inner = chrome::frame_panel(frame, chart_regions[1], render_block);
     line_chart(
         frame,
         render_inner,
@@ -95,8 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         theme,
         app.unicode,
     );
-    let counters_inner = counters_block.inner(counters);
-    frame.render_widget(counters_block, counters);
+    let counters_inner = chrome::frame_panel(frame, counters, counters_block);
     frame.render_widget(
         Paragraph::new(counter_rows(snapshot, theme, area.width, app.unicode)),
         counters_inner,

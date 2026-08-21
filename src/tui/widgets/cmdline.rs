@@ -89,18 +89,14 @@ fn render_completions(
         width,
         height,
     };
-    frame.render_widget(Clear, region);
-
     let block = chrome::panel_with_note(
         "Completions",
         format!("{}", completions.len()),
         false,
         app.theme,
         app.unicode,
-    )
-    .style(Style::default().bg(app.theme.bg));
-    let inner = block.inner(region);
-    frame.render_widget(block, region);
+    );
+    let inner = chrome::popup(frame, region, block, app.theme);
 
     frame.render_widget(
         Paragraph::new(rows_for(completions, rows as usize, app.theme)),

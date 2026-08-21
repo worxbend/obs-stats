@@ -4,11 +4,12 @@
 //! from app state, so the fallback path (`u` at runtime, or `ui.unicode:
 //! false` for a Linux VT) is exercised by the same code as the pretty path.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Padding};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
 
 use crate::tui::theme::{self, Theme};
 
@@ -132,6 +133,38 @@ pub fn panel_with_note<'a>(
     )
 }
 
+/// Draw a panel's frame and return the area left inside it.
+///
+/// Every panel does the same two steps in the same order: work out the inner
+/// rect *before* rendering, because `render_widget` consumes the block. Doing
+/// it the other way round does not compile, but writing both lines out at 24
+/// call sites is 24 chances to reverse them.
+///
+/// Callers still check `inner.height == 0` themselves — a panel squeezed to
+/// its borders has nowhere to draw, and what each one does about that
+/// differs.
+pub fn frame_panel(frame: &mut Frame, area: Rect, block: Block<'_>) -> Rect {
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    inner
+}
+
+/// Draw an overlay's frame over whatever was beneath it, returning the area
+/// left inside.
+///
+/// The `.style(bg(theme.bg))` here is load-bearing and easy to drop.
+/// `Clear` does not paint the theme's background — it resets the cells it
+/// covers, which on a terminal with a transparent or image background means
+/// the user's own wallpaper shows through the middle of the overlay. The
+/// restyle is what puts the background back.
+///
+/// `no_widget_punches_a_hole_in_the_themed_background` is the test that
+/// catches forgetting it, and it sweeps every overlay for exactly this
+/// reason.
+pub fn popup(frame: &mut Frame, region: Rect, block: Block<'_>, theme: &Theme) -> Rect {
+    frame.render_widget(Clear, region);
+    frame_panel(frame, region, block.style(Style::default().bg(theme.bg)))
+}
 /// A horizontal bar of `width` cells filled to `ratio`, coloured by `color`.
 ///
 /// The fill rounds down, so a non-zero ratio always shows at least one cell
@@ -294,6 +327,8 @@ pub fn placeholder(message: &str, theme: &Theme) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     fn theme() -> &'static Theme {
         theme::FALLBACK
@@ -479,5 +514,23 @@ mod tests {
             format!("{unfocused:?}"),
             "focus must change the panel's appearance"
         );
+    }
+
+    #[test]
+    fn frame_panel_hands_back_exactly_the_area_inside_the_border() {
+        let area = Rect::new(0, 0, 40, 10);
+        let block = panel("System", false, theme::FALLBACK, true);
+        let expected = block.inner(area);
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let mut got = Rect::default();
+        terminal
+            .draw(|frame| {
+                got = frame_panel(frame, area, panel("System", false, theme::FALLBACK, true));
+            })
+            .unwrap();
+
+        assert_eq!(got, expected, "the returned rect must be Block::inner");
+        assert!(got.width < area.width && got.height < area.height);
     }
 }

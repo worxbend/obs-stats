@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 
 use crate::tui::app::App;
 use crate::tui::theme::{self, Theme};
@@ -23,19 +23,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
     // +2 border, +2 for the footer hint and its spacer.
     let height = (VISIBLE_ROWS + 4).min(area.height);
     let region = chrome::centered(area, 52.min(area.width), height);
-    frame.render_widget(Clear, region);
-
     let block = chrome::panel_with_note(
         "Appearance",
         format!("{}/{}", app.theme_cursor + 1, theme::THEMES.len()),
         true,
         app.theme,
         app.unicode,
-    )
-    .style(Style::default().bg(app.theme.bg));
-
-    let inner = block.inner(region);
-    frame.render_widget(block, region);
+    );
+    let inner = chrome::popup(frame, region, block, app.theme);
 
     if inner.height == 0 {
         return (region, inner);

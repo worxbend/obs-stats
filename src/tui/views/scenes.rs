@@ -40,8 +40,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         theme,
         app.unicode,
     );
-    let inner = block.inner(list_area);
-    frame.render_widget(block, list_area);
+    let inner = chrome::frame_panel(frame, list_area, block);
 
     if scenes.scenes.is_empty() {
         frame.render_widget(
@@ -142,8 +141,7 @@ fn render_context(frame: &mut Frame, area: Rect, app: &App) {
     let [profiles, collections] = Layout::vertical([Constraint::Ratio(1, 2); 2]).areas(area);
 
     let profile_block = chrome::panel("Profiles", false, theme, app.unicode);
-    let profile_inner = profile_block.inner(profiles);
-    frame.render_widget(profile_block, profiles);
+    let profile_inner = chrome::frame_panel(frame, profiles, profile_block);
     frame.render_widget(
         Paragraph::new(name_list(
             &snapshot.profiles,
@@ -157,8 +155,7 @@ fn render_context(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let collection_block = chrome::panel("Collections", false, theme, app.unicode);
-    let collection_inner = collection_block.inner(collections);
-    frame.render_widget(collection_block, collections);
+    let collection_inner = chrome::frame_panel(frame, collections, collection_block);
     frame.render_widget(
         Paragraph::new(name_list(
             &snapshot.collections,

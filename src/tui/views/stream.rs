@@ -39,8 +39,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         theme,
         app.unicode,
     );
-    let bitrate_inner = bitrate_block.inner(chart_regions[0]);
-    frame.render_widget(bitrate_block, chart_regions[0]);
+    let bitrate_inner = chrome::frame_panel(frame, chart_regions[0], bitrate_block);
     line_chart(
         frame,
         bitrate_inner,
@@ -61,8 +60,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         theme,
         app.unicode,
     );
-    let congestion_inner = congestion_block.inner(chart_regions[1]);
-    frame.render_widget(congestion_block, chart_regions[1]);
+    let congestion_inner = chrome::frame_panel(frame, chart_regions[1], congestion_block);
     line_chart(
         frame,
         congestion_inner,
@@ -78,13 +76,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let detail_regions = Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(details);
 
     let stream_block = chrome::panel("Stream output", false, theme, app.unicode);
-    let stream_inner = stream_block.inner(detail_regions[0]);
-    frame.render_widget(stream_block, detail_regions[0]);
+    let stream_inner = chrome::frame_panel(frame, detail_regions[0], stream_block);
     frame.render_widget(Paragraph::new(stream_detail(snapshot, theme)), stream_inner);
 
     let record_block = chrome::panel("Recording output", false, theme, app.unicode);
-    let record_inner = record_block.inner(detail_regions[1]);
-    frame.render_widget(record_block, detail_regions[1]);
+    let record_inner = chrome::frame_panel(frame, detail_regions[1], record_block);
     frame.render_widget(Paragraph::new(record_detail(snapshot, theme)), record_inner);
 }
 

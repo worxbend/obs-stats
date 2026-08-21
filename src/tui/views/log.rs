@@ -30,8 +30,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).areas(area);
 
     let context_block = chrome::panel("Now", false, theme, app.unicode);
-    let context_inner = context_block.inner(context_area);
-    frame.render_widget(context_block, context_area);
+    let context_inner = chrome::frame_panel(frame, context_area, context_block);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -53,8 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         theme,
         app.unicode,
     );
-    let inner = block.inner(list_area);
-    frame.render_widget(block, list_area);
+    let inner = chrome::frame_panel(frame, list_area, block);
 
     if entries.is_empty() {
         frame.render_widget(

@@ -71,8 +71,7 @@ fn system_card(frame: &mut Frame, area: Rect, app: &App) {
     let snapshot = &app.snapshot;
     let stats = &snapshot.stats;
     let block = chrome::panel("System", false, theme, app.unicode);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = chrome::frame_panel(frame, area, block);
 
     if inner.height == 0 {
         return;
@@ -149,8 +148,7 @@ fn video_card(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme;
     let snapshot = &app.snapshot;
     let block = chrome::panel("Video", false, theme, app.unicode);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = chrome::frame_panel(frame, area, block);
 
     if inner.height == 0 {
         return;
@@ -232,8 +230,7 @@ fn health_card(frame: &mut Frame, area: Rect, app: &App) {
     let color = health_color(health, theme);
 
     let block = chrome::panel("Health", false, theme, app.unicode);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = chrome::frame_panel(frame, area, block);
 
     if inner.height == 0 {
         return;
@@ -328,8 +325,7 @@ fn render_outputs(frame: &mut Frame, area: Rect, app: &App, narrow: bool) {
         theme,
         app.unicode,
     );
-    let stream_inner = stream_block.inner(regions[0]);
-    frame.render_widget(stream_block, regions[0]);
+    let stream_inner = chrome::frame_panel(frame, regions[0], stream_block);
     frame.render_widget(Paragraph::new(stream_rows(snapshot, theme)), stream_inner);
 
     let record_block = chrome::panel_with_note(
@@ -343,8 +339,7 @@ fn render_outputs(frame: &mut Frame, area: Rect, app: &App, narrow: bool) {
         theme,
         app.unicode,
     );
-    let record_inner = record_block.inner(regions[1]);
-    frame.render_widget(record_block, regions[1]);
+    let record_inner = chrome::frame_panel(frame, regions[1], record_block);
     frame.render_widget(Paragraph::new(record_rows(snapshot, theme)), record_inner);
 }
 
@@ -449,8 +444,7 @@ fn render_bitrate(frame: &mut Frame, area: Rect, app: &App) {
         theme,
         app.unicode,
     );
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = chrome::frame_panel(frame, area, block);
 
     // 1 Mbps floor keeps an idle chart flat instead of amplifying noise.
     line_chart(

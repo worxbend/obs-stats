@@ -36,8 +36,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         theme,
         app.unicode,
     );
-    let inner = block.inner(list_area);
-    frame.render_widget(block, list_area);
+    let inner = chrome::frame_panel(frame, list_area, block);
 
     if inputs.is_empty() {
         frame.render_widget(
@@ -66,8 +65,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.put_list_state(View::Audio, inner, state);
 
     let legend_block = chrome::panel("Scale", false, theme, app.unicode);
-    let legend_inner = legend_block.inner(legend_area);
-    frame.render_widget(legend_block, legend_area);
+    let legend_inner = chrome::frame_panel(frame, legend_area, legend_block);
     frame.render_widget(
         Paragraph::new(legend(meter_width(legend_inner.width), theme, app.unicode)),
         legend_inner,
