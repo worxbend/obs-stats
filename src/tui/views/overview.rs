@@ -482,20 +482,8 @@ mod tests {
     use super::*;
     use crate::metrics::Snapshot;
     use crate::obs::stats::{RecordStatus, StreamStatus, VideoSettings};
+    use crate::tui::testing::lines_text;
     use crate::tui::theme;
-
-    fn text(lines: &[Line<'_>]) -> String {
-        lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     fn streaming_snapshot() -> Snapshot {
         let mut snapshot = Snapshot::new(64);
@@ -560,14 +548,14 @@ mod tests {
 
     #[test]
     fn an_idle_stream_card_says_so_instead_of_showing_zeroes() {
-        let rendered = text(&stream_rows(&Snapshot::new(8), theme::FALLBACK));
+        let rendered = lines_text(&stream_rows(&Snapshot::new(8), theme::FALLBACK));
         assert!(rendered.contains("not streaming"));
         assert!(!rendered.contains("BITRATE"));
     }
 
     #[test]
     fn a_live_stream_card_reports_time_bitrate_and_frames() {
-        let rendered = text(&stream_rows(&streaming_snapshot(), theme::FALLBACK));
+        let rendered = lines_text(&stream_rows(&streaming_snapshot(), theme::FALLBACK));
         assert!(rendered.contains("01:05"));
         assert!(rendered.contains("6.00 Mbps"));
         assert!(rendered.contains("715.3 MiB"));
@@ -576,7 +564,7 @@ mod tests {
 
     #[test]
     fn an_idle_recording_card_says_so() {
-        let rendered = text(&record_rows(&Snapshot::new(8), theme::FALLBACK));
+        let rendered = lines_text(&record_rows(&Snapshot::new(8), theme::FALLBACK));
         assert!(rendered.contains("not recording"));
     }
 
@@ -590,7 +578,7 @@ mod tests {
             bytes: 1024,
             ..RecordStatus::default()
         };
-        let rendered = text(&record_rows(&snapshot, theme::FALLBACK));
+        let rendered = lines_text(&record_rows(&snapshot, theme::FALLBACK));
         assert!(rendered.contains("paused"));
         assert!(!rendered.contains("kbps"));
     }
@@ -606,7 +594,7 @@ mod tests {
             ..RecordStatus::default()
         };
         snapshot.record_bitrate = 8_000_000.0;
-        let rendered = text(&record_rows(&snapshot, theme::FALLBACK));
+        let rendered = lines_text(&record_rows(&snapshot, theme::FALLBACK));
         assert!(rendered.contains("8.00 Mbps"));
         assert!(rendered.contains("10.0 MiB"));
         assert!(rendered.contains("00:00:05.000"));
@@ -614,7 +602,7 @@ mod tests {
 
     #[test]
     fn health_rows_cover_every_drop_channel() {
-        let rendered = text(&health_rows(&streaming_snapshot(), theme::FALLBACK));
+        let rendered = lines_text(&health_rows(&streaming_snapshot(), theme::FALLBACK));
         for label in ["DROPPED", "SKIPPED", "ENCODER", "CONGEST"] {
             assert!(rendered.contains(label), "missing {label}");
         }

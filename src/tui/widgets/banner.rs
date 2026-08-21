@@ -92,6 +92,7 @@ pub fn line(alert: &Alert, theme: &Theme, unicode: bool, frame: u64, width: u16)
 mod tests {
     use super::*;
     use crate::metrics::alerts::AlertKind;
+    use crate::tui::testing::line_text;
     use crate::tui::theme;
     use std::time::{Duration, Instant};
 
@@ -104,16 +105,9 @@ mod tests {
         }
     }
 
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
     #[test]
     fn the_banner_names_the_cause_the_count_and_the_fix() {
-        let rendered = text(&line(
+        let rendered = line_text(&line(
             &alert(AlertKind::NetworkDropped, 12),
             theme::FALLBACK,
             true,
@@ -163,7 +157,7 @@ mod tests {
 
     #[test]
     fn ascii_mode_uses_plain_markers() {
-        let rendered = text(&line(
+        let rendered = line_text(&line(
             &alert(AlertKind::NetworkDropped, 3),
             theme::FALLBACK,
             false,
@@ -176,7 +170,7 @@ mod tests {
 
     #[test]
     fn a_reconnect_banner_reads_without_a_frame_count() {
-        let rendered = text(&line(
+        let rendered = line_text(&line(
             &alert(AlertKind::Reconnecting, 0),
             theme::FALLBACK,
             true,
@@ -190,7 +184,7 @@ mod tests {
 
     #[test]
     fn a_narrow_banner_drops_the_hint_rather_than_clipping_it() {
-        let wide = text(&line(
+        let wide = line_text(&line(
             &alert(AlertKind::NetworkDropped, 14),
             theme::FALLBACK,
             true,
@@ -199,7 +193,7 @@ mod tests {
         ));
         assert!(wide.contains("Lower the bitrate"));
 
-        let narrow = text(&line(
+        let narrow = line_text(&line(
             &alert(AlertKind::NetworkDropped, 14),
             theme::FALLBACK,
             true,
@@ -216,7 +210,7 @@ mod tests {
     #[test]
     fn every_kind_renders_a_banner() {
         for kind in AlertKind::ALL {
-            let rendered = text(&line(&alert(kind, 4), theme::FALLBACK, true, 0, 200));
+            let rendered = line_text(&line(&alert(kind, 4), theme::FALLBACK, true, 0, 200));
             assert!(rendered.contains(kind.label()), "{kind:?}");
             assert!(rendered.contains(kind.hint()), "{kind:?}");
         }

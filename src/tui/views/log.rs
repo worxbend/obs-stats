@@ -122,6 +122,7 @@ fn severity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::testing::line_text;
     use crate::tui::theme;
     use std::time::Duration;
 
@@ -133,16 +134,9 @@ mod tests {
         }
     }
 
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
     #[test]
     fn a_row_carries_the_timestamp_and_message() {
-        let rendered = text(&line(
+        let rendered = line_text(&line(
             &entry(LogLevel::Info, "scene → Live", 65),
             theme::FALLBACK,
             true,
@@ -166,7 +160,7 @@ mod tests {
 
     #[test]
     fn ascii_mode_uses_plain_severity_markers() {
-        let rendered = text(&line(
+        let rendered = line_text(&line(
             &entry(LogLevel::Error, "x", 0),
             theme::FALLBACK,
             false,

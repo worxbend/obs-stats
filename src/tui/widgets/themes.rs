@@ -120,19 +120,13 @@ pub fn row(entry: &Theme, active: &Theme, unicode: bool) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
+    use crate::tui::testing::line_text;
 
     #[test]
     fn a_row_shows_swatches_then_the_label() {
         let entry = theme::find("nord").unwrap();
         let line = row(entry, theme::FALLBACK, true);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains("Nord"));
         assert_eq!(rendered.matches('█').count(), 5, "five swatches");
     }
@@ -158,7 +152,7 @@ mod tests {
     #[test]
     fn ascii_mode_swaps_the_swatch_glyph() {
         let line = row(theme::FALLBACK, theme::FALLBACK, false);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains('#'));
         assert!(!rendered.contains('█'));
     }
@@ -167,7 +161,7 @@ mod tests {
     fn every_theme_produces_a_labelled_row() {
         for entry in theme::THEMES {
             assert!(
-                text(&row(entry, theme::FALLBACK, true)).contains(entry.label),
+                line_text(&row(entry, theme::FALLBACK, true)).contains(entry.label),
                 "{} rendered without its label",
                 entry.id
             );

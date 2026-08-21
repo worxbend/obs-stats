@@ -216,22 +216,16 @@ fn state(app: &App) -> (Line<'static>, Vec<(usize, Hit)>) {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::tui::testing::line_text;
     use std::time::{Duration, Instant};
 
     fn app() -> App {
         App::new(Config::default())
     }
 
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
     #[test]
     fn the_dashboard_shows_its_main_keys() {
-        let rendered = text(&hints(&app()));
+        let rendered = line_text(&hints(&app()));
         // `space` opens which-key, which is where the rest of the map lives,
         // and `:` reaches everything by name.
         for key in ["space", "Tab", "r", "p", ":", "?", "q"] {
@@ -243,13 +237,13 @@ mod tests {
     fn hints_change_with_the_overlay() {
         let mut app = app();
         app.overlay = Overlay::Themes;
-        let rendered = text(&hints(&app));
+        let rendered = line_text(&hints(&app));
         assert!(rendered.contains("Enter"));
         assert!(rendered.contains("↑↓"));
 
         // ASCII mode must name the same keys without arrow glyphs.
         app.unicode = false;
-        let ascii = text(&hints(&app));
+        let ascii = line_text(&hints(&app));
         assert!(ascii.contains("up/dn"));
         assert!(ascii.is_ascii(), "{ascii}");
         app.unicode = true;
@@ -260,14 +254,14 @@ mod tests {
         );
 
         app.overlay = Overlay::Help;
-        assert!(text(&hints(&app)).contains("close"));
+        assert!(line_text(&hints(&app)).contains("close"));
     }
 
     #[test]
     fn a_toast_takes_over_the_hint_row() {
         let mut app = app();
         app.notify("poll interval: 500ms".into(), Instant::now());
-        let rendered = text(&hints(&app));
+        let rendered = line_text(&hints(&app));
         assert!(rendered.contains("poll interval: 500ms"));
         assert!(!rendered.contains("quit"));
     }
@@ -280,7 +274,7 @@ mod tests {
             hint: Some("Is OBS running?"),
             retry_in: Duration::from_secs(2),
         };
-        let rendered = text(&hints(&app));
+        let rendered = line_text(&hints(&app));
         assert!(rendered.contains("ws://127.0.0.1:4455"));
         assert!(rendered.contains("Is OBS running?"));
         assert!(!rendered.contains("quit"));
@@ -293,7 +287,7 @@ mod tests {
             reason: "authentication failed".into(),
             hint: Some("Check the password"),
         };
-        let rendered = text(&hints(&app));
+        let rendered = line_text(&hints(&app));
         assert!(rendered.contains("authentication failed"));
         assert!(rendered.contains("Check the password"));
     }
@@ -308,14 +302,14 @@ mod tests {
             retry_in: Duration::from_secs(1),
         };
         app.notify("paused".into(), Instant::now());
-        assert!(text(&hints(&app)).contains("paused"));
+        assert!(line_text(&hints(&app)).contains("paused"));
     }
 
     #[test]
     fn the_right_side_reports_cadence_and_theme() {
         let app = app();
         let (line, _) = state(&app);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains("1000ms"));
         assert!(rendered.contains("Claude"));
         assert!(!rendered.contains("PAUSED"));
@@ -326,6 +320,6 @@ mod tests {
         let mut app = app();
         app.paused = true;
         let (line, _) = state(&app);
-        assert!(text(&line).contains("PAUSED"));
+        assert!(line_text(&line).contains("PAUSED"));
     }
 }

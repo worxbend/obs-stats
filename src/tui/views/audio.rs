@@ -124,14 +124,8 @@ pub fn legend(bar_width: usize, theme: &Theme, unicode: bool) -> Vec<Line<'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::testing::line_text;
     use crate::tui::theme;
-
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
 
     fn input(name: &str, muted: bool, peak: f32) -> AudioInput {
         AudioInput {
@@ -155,7 +149,7 @@ mod tests {
     #[test]
     fn a_row_shows_the_name_fader_and_a_meter() {
         let line = row(&input("Mic/Aux", false, 0.1), 20, theme::FALLBACK, true);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains("Mic/Aux"));
         assert!(rendered.contains("-6.0 dB"));
         assert!(rendered.contains('▰'), "the meter should show level");
@@ -164,7 +158,7 @@ mod tests {
     #[test]
     fn a_muted_row_shows_no_level_however_loud_the_source() {
         let line = row(&input("Mic", true, 1.0), 20, theme::FALLBACK, true);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains("muted"));
         assert!(!rendered.contains('▰'), "a muted input must read as silent");
     }
@@ -172,21 +166,21 @@ mod tests {
     #[test]
     fn a_silent_row_shows_an_empty_meter() {
         let line = row(&input("Desktop", false, 0.0), 20, theme::FALLBACK, true);
-        assert!(!text(&line).contains('▰'));
+        assert!(!line_text(&line).contains('▰'));
     }
 
     #[test]
     fn an_input_with_no_meter_data_yet_does_not_panic() {
         let mut quiet = input("Mic", false, 0.0);
         quiet.peaks.clear();
-        let rendered = text(&row(&quiet, 20, theme::FALLBACK, true));
+        let rendered = line_text(&row(&quiet, 20, theme::FALLBACK, true));
         assert!(rendered.contains("Mic"));
     }
 
     #[test]
     fn the_legend_spans_the_full_scale() {
         let lines = legend(20, theme::FALLBACK, true);
-        let rendered = text(&lines[0]);
+        let rendered = line_text(&lines[0]);
         assert!(rendered.contains("-60 dBFS"));
         assert!(rendered.contains("0 dBFS"));
         assert_eq!(rendered.matches('▰').count(), 20);
@@ -203,6 +197,6 @@ mod tests {
     #[test]
     fn the_legend_survives_a_single_cell_meter() {
         let lines = legend(1, theme::FALLBACK, true);
-        assert_eq!(text(&lines[0]).matches('▰').count(), 1);
+        assert_eq!(line_text(&lines[0]).matches('▰').count(), 1);
     }
 }

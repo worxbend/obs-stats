@@ -236,23 +236,13 @@ pub fn context_summary(snapshot: &Snapshot) -> String {
 mod tests {
     use super::*;
     use crate::obs::stats::SceneList;
+    use crate::tui::testing::{line_text, lines_text};
     use crate::tui::theme;
-
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
-    fn joined(lines: &[Line<'_>]) -> String {
-        lines.iter().map(text).collect::<Vec<_>>().join("\n")
-    }
 
     #[test]
     fn the_program_scene_is_tagged_and_emphasised() {
         let line = scene_line("Live", true, false, 40, theme::FALLBACK, true);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains("Live"));
         assert!(rendered.contains("PROGRAM"));
         assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
@@ -261,14 +251,14 @@ mod tests {
     #[test]
     fn the_preview_scene_is_tagged_differently() {
         let line = scene_line("Intro", false, true, 40, theme::FALLBACK, true);
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains("PREVIEW"));
         assert!(!rendered.contains("PROGRAM"));
     }
 
     #[test]
     fn an_ordinary_scene_gets_no_tag() {
-        let rendered = text(&scene_line(
+        let rendered = line_text(&scene_line(
             "Outro",
             false,
             false,
@@ -291,7 +281,7 @@ mod tests {
             theme::FALLBACK,
             true,
         );
-        let rendered = text(&line);
+        let rendered = line_text(&line);
         assert!(rendered.contains('…'));
         assert!(
             rendered.contains("PROGRAM"),
@@ -302,7 +292,7 @@ mod tests {
     #[test]
     fn an_empty_name_list_shows_its_placeholder() {
         let lines = name_list(&[], "", "no profiles reported", 30, theme::FALLBACK, true);
-        assert!(joined(&lines).contains("no profiles reported"));
+        assert!(lines_text(&lines).contains("no profiles reported"));
     }
 
     #[test]

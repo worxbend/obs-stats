@@ -10,6 +10,8 @@ pub mod app;
 pub mod command;
 pub mod keys;
 pub mod run;
+#[cfg(test)]
+pub mod testing;
 pub mod theme;
 pub mod ui;
 pub mod view;

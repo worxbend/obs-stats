@@ -256,24 +256,12 @@ pub fn remaining_estimate(snapshot: &Snapshot) -> String {
 mod tests {
     use super::*;
     use crate::obs::stats::{RecordStatus, Stats, StreamStatus};
+    use crate::tui::testing::lines_text;
     use crate::tui::theme;
-
-    fn text(lines: &[Line<'_>]) -> String {
-        lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     #[test]
     fn an_idle_stream_shows_state_and_a_prompt_only() {
-        let rendered = text(&stream_detail(&Snapshot::new(8), theme::FALLBACK));
+        let rendered = lines_text(&stream_detail(&Snapshot::new(8), theme::FALLBACK));
         assert!(rendered.contains("idle"));
         assert!(rendered.contains("start streaming"));
         assert!(!rendered.contains("Bitrate"));
@@ -293,7 +281,7 @@ mod tests {
             ..StreamStatus::default()
         };
         snapshot.stream_bitrate = 5_500_000.0;
-        let rendered = text(&stream_detail(&snapshot, theme::FALLBACK));
+        let rendered = lines_text(&stream_detail(&snapshot, theme::FALLBACK));
         assert!(rendered.contains("live"));
         assert!(rendered.contains("00:05:00.000"));
         assert!(rendered.contains("5.50 Mbps"));
@@ -324,12 +312,12 @@ mod tests {
             duration_ms: 65_000,
             ..StreamStatus::default()
         };
-        assert!(text(&stream_detail(&snapshot, theme::FALLBACK)).contains("01:05"));
+        assert!(lines_text(&stream_detail(&snapshot, theme::FALLBACK)).contains("01:05"));
     }
 
     #[test]
     fn an_idle_recording_shows_a_prompt() {
-        let rendered = text(&record_detail(&Snapshot::new(8), theme::FALLBACK));
+        let rendered = lines_text(&record_detail(&Snapshot::new(8), theme::FALLBACK));
         assert!(rendered.contains("idle"));
         assert!(rendered.contains("start recording"));
     }
@@ -342,7 +330,7 @@ mod tests {
             paused: true,
             ..RecordStatus::default()
         };
-        let rendered = text(&record_detail(&snapshot, theme::FALLBACK));
+        let rendered = lines_text(&record_detail(&snapshot, theme::FALLBACK));
         assert!(rendered.contains("paused"));
         assert!(!rendered.contains("Mbps"));
     }

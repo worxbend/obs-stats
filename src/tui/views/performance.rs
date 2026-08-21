@@ -192,20 +192,8 @@ pub fn counter_rows(
 mod tests {
     use super::*;
     use crate::obs::stats::{Stats, StreamStatus, VideoSettings};
+    use crate::tui::testing::lines_text;
     use crate::tui::theme;
-
-    fn text(lines: &[Line<'_>]) -> String {
-        lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     fn snapshot() -> Snapshot {
         let mut snapshot = Snapshot::new(64);
@@ -228,7 +216,7 @@ mod tests {
 
     #[test]
     fn the_three_loss_channels_are_reported_separately() {
-        let rendered = text(&counter_rows(&snapshot(), theme::FALLBACK, 100, true));
+        let rendered = lines_text(&counter_rows(&snapshot(), theme::FALLBACK, 100, true));
         assert!(rendered.contains("Renderer skipped"));
         assert!(rendered.contains("Encoder skipped"));
         assert!(rendered.contains("Network dropped"));
@@ -236,14 +224,14 @@ mod tests {
 
     #[test]
     fn counters_show_both_an_absolute_count_and_a_rate() {
-        let rendered = text(&counter_rows(&snapshot(), theme::FALLBACK, 100, true));
+        let rendered = lines_text(&counter_rows(&snapshot(), theme::FALLBACK, 100, true));
         assert!(rendered.contains("10 (0.1%)"), "{rendered}");
         assert!(rendered.contains("5 (0.1%)"), "{rendered}");
     }
 
     #[test]
     fn totals_and_average_render_time_are_shown() {
-        let rendered = text(&counter_rows(&snapshot(), theme::FALLBACK, 100, true));
+        let rendered = lines_text(&counter_rows(&snapshot(), theme::FALLBACK, 100, true));
         assert!(rendered.contains("10000"));
         assert!(rendered.contains("9000"));
         assert!(rendered.contains("3.20 ms"));
@@ -273,21 +261,21 @@ mod tests {
             total_frames: 1200,
             ..StreamStatus::default()
         };
-        let rendered = text(&counter_rows(&snapshot, theme::FALLBACK, 100, true));
+        let rendered = lines_text(&counter_rows(&snapshot, theme::FALLBACK, 100, true));
         assert!(rendered.contains("12 (1.0%)"));
     }
 
     #[test]
     fn rows_render_in_a_terminal_too_narrow_for_bars() {
         let rows = counter_rows(&snapshot(), theme::FALLBACK, 30, true);
-        let rendered = text(&rows);
+        let rendered = lines_text(&rows);
         assert!(rendered.contains("Renderer skipped"));
         assert!(!rendered.contains('█'), "no room for a bar at this width");
     }
 
     #[test]
     fn an_empty_snapshot_renders_zeroes_rather_than_panicking() {
-        let rendered = text(&counter_rows(&Snapshot::new(8), theme::FALLBACK, 100, true));
+        let rendered = lines_text(&counter_rows(&Snapshot::new(8), theme::FALLBACK, 100, true));
         assert!(rendered.contains("0 (0.0%)"));
         assert!(rendered.contains("0.00 ms"));
     }

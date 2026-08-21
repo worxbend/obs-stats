@@ -238,22 +238,16 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::obs::stats::{RecordStatus, StreamStatus, Version};
+    use crate::tui::testing::line_text;
     use std::time::Duration;
 
     fn app() -> App {
         App::new(Config::default())
     }
 
-    fn text(line: &Line<'_>) -> String {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
-    }
-
     #[test]
     fn identity_always_shows_the_app_and_its_version() {
-        let rendered = text(&identity(&app()));
+        let rendered = line_text(&identity(&app()));
         assert!(rendered.starts_with(APP_NAME));
         assert!(rendered.contains(crate::VERSION));
     }
@@ -264,7 +258,7 @@ mod tests {
         // across releases.
         let mut app = app();
         app.version = "9.9.9".into();
-        let rendered = text(&identity(&app));
+        let rendered = line_text(&identity(&app));
         assert!(rendered.contains("v9.9.9"));
         assert!(!rendered.contains(crate::VERSION));
     }
@@ -272,14 +266,14 @@ mod tests {
     #[test]
     fn identity_gains_the_obs_banner_once_it_is_known() {
         let mut app = app();
-        assert!(!text(&identity(&app)).contains("OBS"));
+        assert!(!line_text(&identity(&app)).contains("OBS"));
 
         app.snapshot.version = Version {
             obs_version: "30.2.3".into(),
             websocket_version: "5.5.0".into(),
             platform: "linux".into(),
         };
-        let rendered = text(&identity(&app));
+        let rendered = line_text(&identity(&app));
         assert!(rendered.contains("OBS 30.2.3"));
         assert!(rendered.contains("(linux)"));
         assert!(rendered.contains("ws 5.5.0"));
@@ -288,11 +282,11 @@ mod tests {
     #[test]
     fn the_connection_chip_reflects_each_state() {
         let mut app = app();
-        assert!(text(&status(&app)).contains("CONNECTING"));
+        assert!(line_text(&status(&app)).contains("CONNECTING"));
 
         app.snapshot.connection = ConnectionState::Connected;
         app.snapshot.polls = 42;
-        let connected = text(&status(&app));
+        let connected = line_text(&status(&app));
         assert!(connected.contains("CONNECTED"));
         assert!(
             connected.contains("#42"),
@@ -304,7 +298,7 @@ mod tests {
             hint: None,
             retry_in: Duration::from_secs(2),
         };
-        let offline = text(&status(&app));
+        let offline = line_text(&status(&app));
         assert!(offline.contains("OFFLINE"));
         assert!(!offline.contains('#'), "no poll count while offline");
     }
@@ -313,7 +307,7 @@ mod tests {
     fn retry_attempts_are_numbered_in_the_chip() {
         let mut app = app();
         app.snapshot.connection = ConnectionState::Connecting { attempt: 3 };
-        assert!(text(&status(&app)).contains("RETRY #3"));
+        assert!(line_text(&status(&app)).contains("RETRY #3"));
     }
 
     #[test]
@@ -325,7 +319,7 @@ mod tests {
             duration_ms: 3_723_000,
             ..StreamStatus::default()
         };
-        let rendered = text(&status(&app));
+        let rendered = line_text(&status(&app));
         assert!(rendered.contains("LIVE"));
         assert!(rendered.contains("1:02:03"));
     }
@@ -338,7 +332,7 @@ mod tests {
             reconnecting: true,
             ..StreamStatus::default()
         };
-        let rendered = text(&status(&app));
+        let rendered = line_text(&status(&app));
         assert!(rendered.contains("RECONNECTING"));
         assert!(!rendered.contains("● LIVE"));
     }
@@ -354,7 +348,7 @@ mod tests {
             active: true,
             ..RecordStatus::default()
         };
-        let rendered = text(&status(&app));
+        let rendered = line_text(&status(&app));
         assert!(rendered.contains("LIVE"));
         assert!(rendered.contains("REC"));
     }
@@ -367,27 +361,27 @@ mod tests {
             paused: true,
             ..RecordStatus::default()
         };
-        assert!(text(&status(&app)).contains("REC PAUSED"));
+        assert!(line_text(&status(&app)).contains("REC PAUSED"));
     }
 
     #[test]
     fn raised_alerts_leave_a_counter_in_the_header() {
         let mut app = app();
-        assert!(!text(&status(&app)).contains('▲'));
+        assert!(!line_text(&status(&app)).contains('▲'));
 
         app.alert_count = 3;
-        let rendered = text(&status(&app));
+        let rendered = line_text(&status(&app));
         assert!(rendered.contains("▲ 3"), "{rendered}");
 
         // And the ASCII form avoids the glyph.
         app.unicode = false;
-        assert!(text(&status(&app)).contains("! 3"));
+        assert!(line_text(&status(&app)).contains("! 3"));
     }
 
     #[test]
     fn idle_outputs_show_no_badges() {
         let app = app();
-        let rendered = text(&status(&app));
+        let rendered = line_text(&status(&app));
         assert!(!rendered.contains("LIVE"));
         assert!(!rendered.contains("REC"));
     }
