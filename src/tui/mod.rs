@@ -9,6 +9,7 @@
 pub mod app;
 pub mod command;
 pub mod keys;
+pub mod mouse;
 pub mod run;
 #[cfg(test)]
 pub mod testing;

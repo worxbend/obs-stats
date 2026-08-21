@@ -10,8 +10,8 @@ src/
               request building and total decoding (codec), typed payloads
   metrics/    Snapshot (the model), History (ring buffers), alerts, derived rates
   config/     YAML schema, XDG paths, loading, secret resolution
-  tui/        app (state machine), keys (keymap), command (`:` registry),
-              views/, widgets/, run (terminal)
+  tui/        app (state machine), keys (keymap), mouse (pointer routing),
+              command (`:` registry), views/, widgets/, run (terminal)
   notify.rs   desktop notifications, on their own thread
   probe.rs    one-shot collection, shared by `once` and the screenshot generator
   cli.rs      clap definitions and flag→config layering
