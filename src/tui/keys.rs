@@ -359,9 +359,9 @@ pub fn menu(pending: Pending) -> Option<(&'static str, &'static [Entry])> {
 pub struct Binding {
     /// Key label using arrow glyphs.
     pub keys: &'static str,
-    /// The same label without arrows, for ASCII mode. Equal to `keys` where
-    /// the label contains no glyphs to substitute.
-    pub keys_ascii: &'static str,
+    /// The same label without arrows, for ASCII mode. `None` — the common
+    /// case — means `keys` is already glyph-free and is used as-is.
+    pub keys_ascii: Option<&'static str>,
     pub description: &'static str,
     pub section: &'static str,
 }
@@ -369,7 +369,11 @@ pub struct Binding {
 impl Binding {
     /// The label to print, given the Unicode setting.
     pub fn label(&self, unicode: bool) -> &'static str {
-        if unicode { self.keys } else { self.keys_ascii }
+        if unicode {
+            self.keys
+        } else {
+            self.keys_ascii.unwrap_or(self.keys)
+        }
     }
 }
 
@@ -378,163 +382,163 @@ pub const BINDINGS: &[Binding] = &[
     Binding {
         section: "Leader",
         keys: "space",
-        keys_ascii: "space",
+        keys_ascii: None,
         description: "Open the which-key menu",
     },
     Binding {
         section: "Leader",
         keys: "space f",
-        keys_ascii: "space f",
+        keys_ascii: None,
         description: "Find: commands, themes, views",
     },
     Binding {
         section: "Leader",
         keys: "space b",
-        keys_ascii: "space b",
+        keys_ascii: None,
         description: "Views — next, previous, pick",
     },
     Binding {
         section: "Leader",
         keys: "space u",
-        keys_ascii: "space u",
+        keys_ascii: None,
         description: "UI toggles",
     },
     Binding {
         section: "Leader",
         keys: "space p",
-        keys_ascii: "space p",
+        keys_ascii: None,
         description: "Polling cadence",
     },
     Binding {
         section: "Leader",
         keys: "space q",
-        keys_ascii: "space q",
+        keys_ascii: None,
         description: "Quit",
     },
     Binding {
         section: "Command",
         keys: ":",
-        keys_ascii: ":",
+        keys_ascii: None,
         description: "Command line",
     },
     Binding {
         section: "Command",
         keys: "space f f",
-        keys_ascii: "space f f",
+        keys_ascii: None,
         description: "Fuzzy command palette",
     },
     Binding {
         section: "Command",
         keys: "Tab",
-        keys_ascii: "Tab",
+        keys_ascii: None,
         description: "Complete (in the command line)",
     },
     Binding {
         section: "Navigation",
         keys: "Tab / →",
-        keys_ascii: "Tab / Right",
+        keys_ascii: Some("Tab / Right"),
         description: "Next view",
     },
     Binding {
         section: "Navigation",
         keys: "Shift-Tab / ←",
-        keys_ascii: "Shift-Tab / Left",
+        keys_ascii: Some("Shift-Tab / Left"),
         description: "Previous view",
     },
     Binding {
         section: "Navigation",
         keys: "L / H",
-        keys_ascii: "L / H",
+        keys_ascii: None,
         description: "Next / previous view",
     },
     Binding {
         section: "Navigation",
         keys: "] b / [ b",
-        keys_ascii: "] b / [ b",
+        keys_ascii: None,
         description: "Next / previous view",
     },
     Binding {
         section: "Navigation",
         keys: "1 … 6",
-        keys_ascii: "1 - 6",
+        keys_ascii: Some("1 - 6"),
         description: "Jump straight to a view",
     },
     Binding {
         section: "Motions",
         keys: "j / k, ↓ / ↑",
-        keys_ascii: "j / k, Down / Up",
+        keys_ascii: Some("j / k, Down / Up"),
         description: "Move the list cursor",
     },
     Binding {
         section: "Motions",
         keys: "Ctrl-d / Ctrl-u",
-        keys_ascii: "Ctrl-d / Ctrl-u",
+        keys_ascii: None,
         description: "Half a page down / up",
     },
     Binding {
         section: "Motions",
         keys: "Ctrl-f / Ctrl-b",
-        keys_ascii: "Ctrl-f / Ctrl-b",
+        keys_ascii: None,
         description: "A page down / up",
     },
     Binding {
         section: "Motions",
         keys: "g g / G",
-        keys_ascii: "g g / G",
+        keys_ascii: None,
         description: "Jump to the top / bottom",
     },
     Binding {
         section: "Data",
         keys: "r",
-        keys_ascii: "r",
+        keys_ascii: None,
         description: "Refresh now",
     },
     Binding {
         section: "Data",
         keys: "p",
-        keys_ascii: "p",
+        keys_ascii: None,
         description: "Pause or resume the display",
     },
     Binding {
         section: "Data",
         keys: "+ / -",
-        keys_ascii: "+ / -",
+        keys_ascii: None,
         description: "Poll faster / slower",
     },
     Binding {
         section: "Appearance",
         keys: "F2 / t",
-        keys_ascii: "F2 / t",
+        keys_ascii: None,
         description: "Theme picker",
     },
     Binding {
         section: "Appearance",
         keys: "u",
-        keys_ascii: "u",
+        keys_ascii: None,
         description: "Toggle Unicode drawing",
     },
     Binding {
         section: "General",
         keys: "? / F1",
-        keys_ascii: "? / F1",
+        keys_ascii: None,
         description: "This help",
     },
     Binding {
         section: "General",
         keys: "q / Ctrl-C",
-        keys_ascii: "q / Ctrl-C",
+        keys_ascii: None,
         description: "Quit",
     },
     Binding {
         section: "Overlays",
         keys: "Enter",
-        keys_ascii: "Enter",
+        keys_ascii: None,
         description: "Apply and close",
     },
     Binding {
         section: "Overlays",
         keys: "Esc",
-        keys_ascii: "Esc",
+        keys_ascii: None,
         description: "Close, reverting the preview",
     },
 ];
@@ -1158,7 +1162,7 @@ mod tests {
                 binding.section
             );
             assert!(!binding.keys.is_empty());
-            assert!(!binding.keys_ascii.is_empty());
+            assert!(binding.keys_ascii.is_none_or(|ascii| !ascii.is_empty()));
             assert!(!binding.description.is_empty());
         }
     }
