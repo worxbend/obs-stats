@@ -8,6 +8,9 @@
 //!
 //! Everything here is pure: parsing and completion take strings and return
 //! values, with no access to app state and no I/O.
+//!
+//! Argument-free commands carry their [`Action`] in the table itself, so a
+//! [`CommandSpec`] that compiles is one that runs.
 
 use crate::config::model::{MAX_POLL_INTERVAL_MS, MIN_POLL_INTERVAL_MS};
 use crate::tui::keys::Action;
@@ -15,10 +18,15 @@ use crate::tui::theme;
 use crate::tui::view::View;
 
 /// What a command's single argument names, which is also what completes it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum ArgKind {
-    /// The command takes no argument.
-    None,
+    /// The command takes no argument, and this is what running it does.
+    ///
+    /// Carrying the action here rather than looking it up by name means a
+    /// `CommandSpec` that compiles is one that runs: there is no second table
+    /// to keep in step, and no way to add a command the parser does not know
+    /// about.
+    None(Action),
     /// A theme id. Optional: bare `:theme` opens the picker.
     Theme,
     /// A view id. Optional: bare `:view` opens the palette.
@@ -47,7 +55,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "help",
         aliases: &["h"],
-        arg: ArgKind::None,
+        arg: ArgKind::None(Action::ToggleHelp),
         summary: "Show the key reference",
     },
     CommandSpec {
@@ -71,31 +79,31 @@ pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         name: "refresh",
         aliases: &["e"],
-        arg: ArgKind::None,
+        arg: ArgKind::None(Action::Refresh),
         summary: "Poll OBS immediately",
     },
     CommandSpec {
         name: "pause",
         aliases: &[],
-        arg: ArgKind::None,
+        arg: ArgKind::None(Action::TogglePause),
         summary: "Freeze or resume the display",
     },
     CommandSpec {
         name: "unicode",
         aliases: &["ascii"],
-        arg: ArgKind::None,
+        arg: ArgKind::None(Action::ToggleUnicode),
         summary: "Toggle Unicode block drawing",
     },
     CommandSpec {
         name: "icons",
         aliases: &[],
-        arg: ArgKind::None,
+        arg: ArgKind::None(Action::ToggleIcons),
         summary: "Toggle the tab-strip icons",
     },
     CommandSpec {
         name: "quit",
         aliases: &["q", "qa", "exit"],
-        arg: ArgKind::None,
+        arg: ArgKind::None(Action::Quit),
         summary: "Leave obs-stats",
     },
 ];
@@ -137,21 +145,11 @@ pub fn parse(input: &str) -> Result<Action, String> {
     };
 
     match spec.arg {
-        ArgKind::None => {
+        ArgKind::None(action) => {
             if !rest.is_empty() {
                 return Err(format!(":{} takes no argument", spec.name));
             }
-            Ok(match spec.name {
-                "help" => Action::ToggleHelp,
-                "refresh" => Action::Refresh,
-                "pause" => Action::TogglePause,
-                "unicode" => Action::ToggleUnicode,
-                "icons" => Action::ToggleIcons,
-                "quit" => Action::Quit,
-                // Unreachable while every argument-free command above is
-                // listed, and a plain error if a future one is not.
-                other => return Err(format!(":{other} is not wired up")),
-            })
+            Ok(action)
         }
         ArgKind::Theme => {
             if rest.is_empty() {
@@ -202,7 +200,7 @@ pub fn complete(input: &str) -> Vec<String> {
             .iter()
             .filter(|spec| spec.name.starts_with(&prefix))
             .map(|spec| {
-                if spec.arg == ArgKind::None {
+                if matches!(spec.arg, ArgKind::None(_)) {
                     spec.name.to_string()
                 } else {
                     format!("{} ", spec.name)
@@ -218,7 +216,7 @@ pub fn complete(input: &str) -> Vec<String> {
     let prefix = rest.to_ascii_lowercase();
 
     let values: Vec<String> = match spec.arg {
-        ArgKind::None => Vec::new(),
+        ArgKind::None(_) => Vec::new(),
         ArgKind::Theme => theme::THEMES
             .iter()
             .map(|entry| entry.id.to_string())
@@ -258,14 +256,14 @@ pub fn palette_items() -> Vec<PaletteItem> {
         // Commands needing an argument are represented by their concrete
         // values below; offering a bare `:theme` here as well would list the
         // same thing twice.
-        if spec.arg != ArgKind::None {
+        let ArgKind::None(action) = spec.arg else {
             continue;
-        }
+        };
         items.push(PaletteItem {
             label: format!(":{}", spec.name),
             detail: spec.summary.to_string(),
             kind: "command",
-            action: parse(spec.name).unwrap_or(Action::Cancel),
+            action,
         });
     }
 
@@ -361,7 +359,7 @@ mod tests {
     fn every_command_parses_from_its_name_and_every_alias() {
         for spec in COMMANDS {
             // Commands with a required argument are exercised separately.
-            if spec.arg == ArgKind::Poll {
+            if matches!(spec.arg, ArgKind::Poll) {
                 continue;
             }
             for word in std::iter::once(&spec.name).chain(spec.aliases) {
@@ -463,7 +461,8 @@ mod tests {
             for completion in complete(seed) {
                 if completion.ends_with(' ') {
                     assert!(
-                        lookup(completion.trim()).is_some_and(|spec| spec.arg != ArgKind::None),
+                        lookup(completion.trim())
+                            .is_some_and(|spec| !matches!(spec.arg, ArgKind::None(_))),
                         "{completion:?} trails a space but takes no argument"
                     );
                     continue;
