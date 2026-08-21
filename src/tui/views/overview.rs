@@ -10,6 +10,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::metrics::{Health, Snapshot};
+use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
 use crate::tui::views::{NARROW_WIDTH, axis_bitrate, bar_width, line_chart, sparkline, verdict};
@@ -27,10 +28,6 @@ const SPARK_HEIGHT: u16 = 4;
 /// CPU percentages at which the gauge turns amber, then red.
 const CPU_WARN: f64 = 50.0;
 const CPU_DANGER: f64 = 80.0;
-
-/// Free disk space, in MiB, below which recording is at risk.
-const DISK_WARN_MIB: f64 = 20_000.0;
-const DISK_DANGER_MIB: f64 = 5_000.0;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let narrow = area.width < NARROW_WIDTH;
@@ -95,14 +92,14 @@ fn system_card(frame: &mut Frame, area: Rect, app: &App) {
         ),
         chrome::row(
             "MEM",
-            util::bytes((stats.memory_usage * 1024.0 * 1024.0) as u64),
+            util::bytes(stats.memory_bytes() as u64),
             theme.fg,
             LABEL_WIDTH,
             theme,
         ),
         chrome::row(
             "DISK",
-            util::bytes((stats.available_disk_space * 1024.0 * 1024.0) as u64),
+            util::bytes(stats.available_disk_bytes() as u64),
             theme.color_when_low(stats.available_disk_space, DISK_WARN_MIB, DISK_DANGER_MIB),
             LABEL_WIDTH,
             theme,
@@ -264,7 +261,7 @@ fn health_card(frame: &mut Frame, area: Rect, app: &App) {
 ///
 /// Extracted so the wording and colouring can be asserted on directly.
 pub fn health_rows(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
-    let congestion = snapshot.stream.congestion * 100.0;
+    let congestion = snapshot.stream.congestion_percent();
     vec![
         chrome::row(
             "DROPPED",

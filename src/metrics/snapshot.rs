@@ -319,7 +319,9 @@ impl Snapshot {
             .push(self.stats.average_frame_render_time);
         self.history.stream_bitrate.push(self.stream_bitrate);
         self.history.record_bitrate.push(self.record_bitrate);
-        self.history.congestion.push(self.stream.congestion * 100.0);
+        self.history
+            .congestion
+            .push(self.stream.congestion_percent());
         self.history
             .render_skips
             .push(self.session_render_skipped() as f64);

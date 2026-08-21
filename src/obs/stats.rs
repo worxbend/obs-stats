@@ -70,7 +70,33 @@ impl Stats {
     pub fn output_skip_percent(&self) -> f64 {
         self.output().percent()
     }
+
+    /// Resident memory in bytes, for formatters that want a unit-suffixed
+    /// figure rather than a bare MiB number.
+    pub fn memory_bytes(&self) -> f64 {
+        self.memory_usage * MIB
+    }
+
+    /// Free space on the recording volume, in bytes.
+    ///
+    /// Stays `f64` rather than rounding to `u64`: the recording-time-left
+    /// estimate divides this by a bitrate, and truncating first would throw
+    /// away precision before the division that needs it.
+    pub fn available_disk_bytes(&self) -> f64 {
+        self.available_disk_space * MIB
+    }
 }
+
+/// Bytes in a mebibyte. OBS reports memory and disk space in MiB; anything
+/// that formats those with a unit suffix has to convert first.
+pub const MIB: f64 = 1024.0 * 1024.0;
+
+/// Free disk space, in MiB, below which recording is at risk.
+///
+/// Lives here beside the field it qualifies, so the stream view and the
+/// overview cannot colour the same number against different thresholds.
+pub const DISK_WARN_MIB: f64 = 20_000.0;
+pub const DISK_DANGER_MIB: f64 = 5_000.0;
 
 /// A skipped-out-of-total frame count.
 ///
@@ -149,6 +175,12 @@ impl StreamStatus {
     /// Share of frames dropped by the network, since the stream started.
     pub fn drop_percent(&self) -> f64 {
         self.dropped().percent()
+    }
+
+    /// Encoder backpressure as a percentage rather than the `0.0..=1.0`
+    /// fraction OBS reports.
+    pub fn congestion_percent(&self) -> f64 {
+        self.congestion * 100.0
     }
 }
 

@@ -6,6 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::metrics::Snapshot;
+use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
 use crate::tui::views::{NARROW_WIDTH, axis_bitrate, axis_percent, line_chart};
@@ -52,7 +53,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         app.unicode,
     );
 
-    let congestion = snapshot.stream.congestion * 100.0;
+    let congestion = snapshot.stream.congestion_percent();
     let congestion_block = chrome::panel_with_note(
         "Congestion",
         util::percent(congestion),
@@ -153,8 +154,8 @@ pub fn stream_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
         ),
         chrome::row(
             "Congestion",
-            util::percent(stream.congestion * 100.0),
-            theme.color_when_high(stream.congestion * 100.0, 20.0, 50.0),
+            util::percent(stream.congestion_percent()),
+            theme.color_when_high(stream.congestion_percent(), 20.0, 50.0),
             LABEL_WIDTH,
             theme,
         ),
@@ -216,8 +217,12 @@ pub fn record_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
         ),
         chrome::row(
             "Disk free",
-            util::bytes((snapshot.stats.available_disk_space * 1024.0 * 1024.0) as u64),
-            theme.color_when_low(snapshot.stats.available_disk_space, 20_000.0, 5_000.0),
+            util::bytes(snapshot.stats.available_disk_bytes() as u64),
+            theme.color_when_low(
+                snapshot.stats.available_disk_space,
+                DISK_WARN_MIB,
+                DISK_DANGER_MIB,
+            ),
             LABEL_WIDTH,
             theme,
         ),
@@ -242,7 +247,7 @@ pub fn remaining_estimate(snapshot: &Snapshot) -> String {
     if bytes_per_second < 1024.0 {
         return "—".to_string();
     }
-    let free_bytes = snapshot.stats.available_disk_space * 1024.0 * 1024.0;
+    let free_bytes = snapshot.stats.available_disk_bytes();
     let seconds = free_bytes / bytes_per_second;
     if !seconds.is_finite() || seconds <= 0.0 {
         return "—".to_string();
