@@ -7,13 +7,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::metrics::Snapshot;
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
 use crate::tui::view::View;
 use crate::tui::widgets::chrome;
+use crate::tui::widgets::list;
 use crate::util;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -49,29 +50,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         );
     } else {
         let width = inner.width as usize;
-        let items: Vec<ListItem> = scenes
+        let items: Vec<Line> = scenes
             .scenes
             .iter()
             .map(|scene| {
-                ListItem::new(scene_line(
+                scene_line(
                     &scene.name,
                     scene.name == scenes.current_program,
                     scene.name == scenes.current_preview,
                     width,
                     theme,
                     app.unicode,
-                ))
+                )
             })
             .collect();
 
-        let list = List::new(items).highlight_style(
-            Style::default()
-                .bg(theme.highlight_bg)
-                .fg(theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
-        );
-        state.select(Some(selected));
-        frame.render_stateful_widget(list, inner, &mut state);
+        list::render_rows(frame, inner, items, selected, &mut state, theme);
     }
 
     app.put_list_state(View::Scenes, inner, state);

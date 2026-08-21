@@ -8,12 +8,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{ListState, Paragraph};
 
 use crate::tui::app::App;
 use crate::tui::command::PaletteItem;
 use crate::tui::theme::Theme;
 use crate::tui::widgets::chrome;
+use crate::tui::widgets::list;
 
 /// Rows shown at once before the list scrolls.
 const VISIBLE_ROWS: u16 = 12;
@@ -51,22 +52,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
     }
 
     let width = list_area.width as usize;
-    let items: Vec<ListItem> = app
+    let items: Vec<Line> = app
         .palette
         .matches
         .iter()
-        .map(|item| ListItem::new(row(item, width, app.theme)))
+        .map(|item| row(item, width, app.theme))
         .collect();
 
-    let list = List::new(items).highlight_style(
-        Style::default()
-            .bg(app.theme.highlight_bg)
-            .fg(app.theme.highlight_fg)
-            .add_modifier(Modifier::BOLD),
+    list::render_rows(
+        frame,
+        list_area,
+        items,
+        app.palette.cursor,
+        state,
+        app.theme,
     );
-
-    state.select(Some(app.palette.cursor));
-    frame.render_stateful_widget(list, list_area, state);
 
     (region, list_area)
 }

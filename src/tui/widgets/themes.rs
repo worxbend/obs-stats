@@ -8,11 +8,12 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{ListState, Paragraph};
 
 use crate::tui::app::App;
 use crate::tui::theme::{self, Theme};
 use crate::tui::widgets::chrome;
+use crate::tui::widgets::list;
 
 /// Rows of themes shown at once, before the list scrolls.
 const VISIBLE_ROWS: u16 = 12;
@@ -44,20 +45,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
         ..inner
     };
 
-    let items: Vec<ListItem> = theme::THEMES
+    let items: Vec<Line> = theme::THEMES
         .iter()
-        .map(|entry| ListItem::new(row(entry, app.theme, app.unicode)))
+        .map(|entry| row(entry, app.theme, app.unicode))
         .collect();
 
-    let list = List::new(items).highlight_style(
-        Style::default()
-            .bg(app.theme.highlight_bg)
-            .fg(app.theme.highlight_fg)
-            .add_modifier(Modifier::BOLD),
-    );
-
-    state.select(Some(app.theme_cursor));
-    frame.render_stateful_widget(list, list_area, state);
+    list::render_rows(frame, list_area, items, app.theme_cursor, state, app.theme);
 
     if footer_height == 1 {
         let footer = Rect {

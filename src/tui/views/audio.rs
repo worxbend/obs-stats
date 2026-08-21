@@ -2,14 +2,15 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::obs::stats::AudioInput;
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
 use crate::tui::view::View;
+use crate::tui::widgets::list;
 use crate::tui::widgets::{chrome, meter};
 
 /// Columns reserved for the input name.
@@ -48,19 +49,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         );
     } else {
         let bar_width = meter_width(inner.width);
-        let items: Vec<ListItem> = inputs
+        let items: Vec<Line> = inputs
             .iter()
-            .map(|input| ListItem::new(row(input, bar_width, theme, app.unicode)))
+            .map(|input| row(input, bar_width, theme, app.unicode))
             .collect();
 
-        let list = List::new(items).highlight_style(
-            Style::default()
-                .bg(theme.highlight_bg)
-                .fg(theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
+        list::render_rows(
+            frame,
+            inner,
+            items,
+            app.selection(View::Audio),
+            &mut state,
+            theme,
         );
-        state.select(Some(app.selection(View::Audio)));
-        frame.render_stateful_widget(list, inner, &mut state);
     }
     app.put_list_state(View::Audio, inner, state);
 

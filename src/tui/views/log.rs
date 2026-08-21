@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::metrics::LogEntry;
 use crate::obs::client::LogLevel;
@@ -17,6 +17,7 @@ use crate::tui::theme::Theme;
 use crate::tui::view::View;
 use crate::tui::views::scenes::context_summary;
 use crate::tui::widgets::chrome;
+use crate::tui::widgets::list;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let theme = app.theme;
@@ -66,20 +67,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let items: Vec<ListItem> = entries
+    let items: Vec<Line> = entries
         .iter()
-        .map(|entry| ListItem::new(line(entry, theme, app.unicode)))
+        .map(|entry| line(entry, theme, app.unicode))
         .collect();
 
-    let list = List::new(items).highlight_style(
-        Style::default()
-            .bg(theme.highlight_bg)
-            .fg(theme.highlight_fg)
-            .add_modifier(Modifier::BOLD),
+    list::render_rows(
+        frame,
+        inner,
+        items,
+        app.selection(View::Log),
+        &mut state,
+        theme,
     );
-
-    state.select(Some(app.selection(View::Log)));
-    frame.render_stateful_widget(list, inner, &mut state);
     app.put_list_state(View::Log, inner, state);
 }
 

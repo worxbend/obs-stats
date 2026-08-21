@@ -9,6 +9,7 @@ pub mod chrome;
 pub mod cmdline;
 pub mod header;
 pub mod help;
+pub mod list;
 pub mod meter;
 pub mod palette;
 pub mod scrollbar;
