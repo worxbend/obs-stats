@@ -68,7 +68,12 @@ impl ConnectionConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiConfig {
-    /// Theme id, or `custom` when `custom_theme` is populated.
+    /// Name of a built-in theme from `tui::theme::THEMES`.
+    ///
+    /// Matched ignoring case and treating `-` and `_` as the same character,
+    /// so `Tokyo Night`, `tokyo-night` and `tokyo_night` all select the same
+    /// theme. An unrecognised name falls back to the first built-in rather
+    /// than failing to start.
     pub theme: String,
     /// How often the hot metrics are polled.
     pub poll_interval_ms: u64,
@@ -76,7 +81,10 @@ pub struct UiConfig {
     pub history_seconds: u64,
     /// Draw Unicode block glyphs and rounded borders. Disable for a TTY.
     pub unicode: bool,
-    /// Show the emoji/glyph column in panels.
+    /// Prefix tab-strip entries and help-overlay headings with `View::icon`.
+    ///
+    /// This is not a panel column: turning it off shortens those labels
+    /// rather than removing a field from any table.
     pub show_icons: bool,
     /// Enable mouse selection and scrolling.
     pub mouse: bool,

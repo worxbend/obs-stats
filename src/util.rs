@@ -71,7 +71,7 @@ pub fn frame_time(millis: f64) -> String {
     format!("{millis:.2} ms")
 }
 
-/// Truncate to `width` display columns, appending `…` when it does not fit.
+/// Truncate to `width` `char`s, appending `…` when it does not fit.
 ///
 /// Operates on `char`s rather than bytes so multi-byte scene names never get
 /// sliced mid-codepoint.
