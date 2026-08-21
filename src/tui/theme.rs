@@ -489,15 +489,15 @@ fn normalize(id: &str) -> String {
 }
 
 impl Theme {
-    /// Colour for a value that gets worse as it grows: green below `warn`,
-    /// amber up to `danger`, red beyond.
+    /// Colour for a value that gets worse as it grows: green below
+    /// `warn_above`, amber up to `danger_above`, red at or beyond it.
     ///
     /// Used for CPU, congestion, frame budget, and drop rates so those all
     /// read the same way across panels.
-    pub fn scale_up(&self, value: f64, warn: f64, danger: f64) -> Color {
-        if value >= danger {
+    pub fn color_when_high(&self, value: f64, warn_above: f64, danger_above: f64) -> Color {
+        if value >= danger_above {
             self.danger
-        } else if value >= warn {
+        } else if value >= warn_above {
             self.warning
         } else {
             self.success
@@ -505,11 +505,12 @@ impl Theme {
     }
 
     /// Colour for a value that gets worse as it *shrinks* — FPS against its
-    /// target, free disk space.
-    pub fn scale_down(&self, value: f64, warn: f64, danger: f64) -> Color {
-        if value <= danger {
+    /// target, free disk space. Green above `warn_below`, amber down to
+    /// `danger_below`, red at or under it.
+    pub fn color_when_low(&self, value: f64, warn_below: f64, danger_below: f64) -> Color {
+        if value <= danger_below {
             self.danger
-        } else if value <= warn {
+        } else if value <= warn_below {
             self.warning
         } else {
             self.success
@@ -620,22 +621,22 @@ mod tests {
     }
 
     #[test]
-    fn scale_up_moves_green_to_red_as_the_value_grows() {
+    fn color_when_high_moves_green_to_red_as_the_value_grows() {
         let theme = FALLBACK;
-        assert_eq!(theme.scale_up(10.0, 50.0, 80.0), theme.success);
-        assert_eq!(theme.scale_up(60.0, 50.0, 80.0), theme.warning);
-        assert_eq!(theme.scale_up(95.0, 50.0, 80.0), theme.danger);
+        assert_eq!(theme.color_when_high(10.0, 50.0, 80.0), theme.success);
+        assert_eq!(theme.color_when_high(60.0, 50.0, 80.0), theme.warning);
+        assert_eq!(theme.color_when_high(95.0, 50.0, 80.0), theme.danger);
         // Boundaries belong to the more severe band.
-        assert_eq!(theme.scale_up(50.0, 50.0, 80.0), theme.warning);
-        assert_eq!(theme.scale_up(80.0, 50.0, 80.0), theme.danger);
+        assert_eq!(theme.color_when_high(50.0, 50.0, 80.0), theme.warning);
+        assert_eq!(theme.color_when_high(80.0, 50.0, 80.0), theme.danger);
     }
 
     #[test]
-    fn scale_down_moves_green_to_red_as_the_value_shrinks() {
+    fn color_when_low_moves_green_to_red_as_the_value_shrinks() {
         let theme = FALLBACK;
-        assert_eq!(theme.scale_down(60.0, 55.0, 30.0), theme.success);
-        assert_eq!(theme.scale_down(50.0, 55.0, 30.0), theme.warning);
-        assert_eq!(theme.scale_down(10.0, 55.0, 30.0), theme.danger);
+        assert_eq!(theme.color_when_low(60.0, 55.0, 30.0), theme.success);
+        assert_eq!(theme.color_when_low(50.0, 55.0, 30.0), theme.warning);
+        assert_eq!(theme.color_when_low(10.0, 55.0, 30.0), theme.danger);
     }
 
     #[test]

@@ -69,7 +69,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         "%",
         axis_percent,
         100.0,
-        theme.scale_up(congestion, 20.0, 50.0),
+        theme.color_when_high(congestion, 20.0, 50.0),
         theme,
         app.unicode,
     );
@@ -147,14 +147,14 @@ pub fn stream_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
                 stream.skipped_frames,
                 util::percent(stream.drop_percent())
             ),
-            theme.scale_up(stream.drop_percent(), 0.1, 1.0),
+            theme.color_when_high(stream.drop_percent(), 0.1, 1.0),
             LABEL_WIDTH,
             theme,
         ),
         chrome::row(
             "Congestion",
             util::percent(stream.congestion * 100.0),
-            theme.scale_up(stream.congestion * 100.0, 20.0, 50.0),
+            theme.color_when_high(stream.congestion * 100.0, 20.0, 50.0),
             LABEL_WIDTH,
             theme,
         ),
@@ -217,7 +217,7 @@ pub fn record_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
         chrome::row(
             "Disk free",
             util::bytes((snapshot.stats.available_disk_space * 1024.0 * 1024.0) as u64),
-            theme.scale_down(snapshot.stats.available_disk_space, 20_000.0, 5_000.0),
+            theme.color_when_low(snapshot.stats.available_disk_space, 20_000.0, 5_000.0),
             LABEL_WIDTH,
             theme,
         ),

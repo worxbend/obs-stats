@@ -53,7 +53,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         "fps",
         axis_count,
         target.max(30.0),
-        theme.scale_down(snapshot.fps_ratio() * 100.0, 95.0, 85.0),
+        theme.color_when_low(snapshot.fps_ratio() * 100.0, 95.0, 85.0),
         theme,
         app.unicode,
     );
@@ -79,7 +79,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         "ms",
         axis_millis,
         budget_ms.max(1.0),
-        theme.scale_up(snapshot.frame_budget_ratio() * 100.0, 50.0, 80.0),
+        theme.color_when_high(snapshot.frame_budget_ratio() * 100.0, 50.0, 80.0),
         theme,
         app.unicode,
     );
@@ -129,7 +129,7 @@ pub fn counter_rows(
                 snapshot.session_render_skipped(),
                 util::percent(render_skip)
             ),
-            theme.scale_up(render_skip, 0.5, 2.0),
+            theme.color_when_high(render_skip, 0.5, 2.0),
             LABEL_WIDTH,
             width,
             theme,
@@ -143,7 +143,7 @@ pub fn counter_rows(
                 snapshot.session_output_skipped(),
                 util::percent(output_skip)
             ),
-            theme.scale_up(output_skip, 0.5, 1.0),
+            theme.color_when_high(output_skip, 0.5, 1.0),
             LABEL_WIDTH,
             width,
             theme,
@@ -157,7 +157,7 @@ pub fn counter_rows(
                 snapshot.stream.skipped_frames,
                 util::percent(network_drop)
             ),
-            theme.scale_up(network_drop, 0.1, 1.0),
+            theme.color_when_high(network_drop, 0.1, 1.0),
             LABEL_WIDTH,
             width,
             theme,
