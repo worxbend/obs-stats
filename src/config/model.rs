@@ -148,22 +148,33 @@ impl AlertsConfig {
             cooldown: std::time::Duration::from_secs(self.cooldown_seconds),
         }
     }
+
+    /// Reject a rolling window or cooldown outside the supported range.
+    fn validate(&self) -> Result<()> {
+        if !(MIN_ALERT_WINDOW_SECONDS..=MAX_ALERT_WINDOW_SECONDS).contains(&self.window_seconds) {
+            return Err(Error::ConfigInvalid(format!(
+                "alerts.window_seconds must be between {MIN_ALERT_WINDOW_SECONDS} and {MAX_ALERT_WINDOW_SECONDS}"
+            )));
+        }
+        if self.cooldown_seconds > MAX_ALERT_COOLDOWN_SECONDS {
+            return Err(Error::ConfigInvalid(format!(
+                "alerts.cooldown_seconds must be at most {MAX_ALERT_COOLDOWN_SECONDS}"
+            )));
+        }
+        Ok(())
+    }
 }
 
-impl Config {
-    /// Check every invariant the rest of the program relies on.
-    ///
-    /// Returns the *first* problem found, phrased with the config key so the
-    /// user knows exactly which line to edit.
-    pub fn validate(&self) -> Result<()> {
-        let connection = &self.connection;
-
-        if connection.host.trim().is_empty() {
+impl ConnectionConfig {
+    /// Reject anything that would make [`ConnectionConfig::url`] produce a
+    /// URL that cannot be dialled.
+    fn validate(&self) -> Result<()> {
+        if self.host.trim().is_empty() {
             return Err(Error::ConfigInvalid(
                 "connection.host must not be empty".into(),
             ));
         }
-        if connection
+        if self
             .host
             .chars()
             .any(|c| c.is_control() || c.is_whitespace())
@@ -172,64 +183,71 @@ impl Config {
                 "connection.host must not contain control or whitespace characters".into(),
             ));
         }
-        if connection.host.contains('/') {
+        if self.host.contains('/') {
             return Err(Error::ConfigInvalid(
                 "connection.host must be a bare host, not a URL".into(),
             ));
         }
-        if connection.port == 0 {
+        if self.port == 0 {
             return Err(Error::ConfigInvalid(
                 "connection.port must be in range 1-65535".into(),
             ));
         }
-        if connection.connect_timeout_ms == 0 {
+        if self.connect_timeout_ms == 0 {
             return Err(Error::ConfigInvalid(
                 "connection.connect_timeout_ms must be positive".into(),
             ));
         }
-        if !connection.password_env.is_empty() && !is_env_name(&connection.password_env) {
+        if !self.password_env.is_empty() && !is_env_name(&self.password_env) {
             return Err(Error::ConfigInvalid(format!(
                 "connection.password_env is not a valid environment variable name: {}",
-                connection.password_env
+                self.password_env
             )));
         }
+        Ok(())
+    }
+}
 
-        let ui = &self.ui;
-        if !(MIN_POLL_INTERVAL_MS..=MAX_POLL_INTERVAL_MS).contains(&ui.poll_interval_ms) {
+impl UiConfig {
+    /// Reject cadences outside the supported range, and names that do not
+    /// resolve to a real theme or view.
+    fn validate(&self) -> Result<()> {
+        if !(MIN_POLL_INTERVAL_MS..=MAX_POLL_INTERVAL_MS).contains(&self.poll_interval_ms) {
             return Err(Error::ConfigInvalid(format!(
                 "ui.poll_interval_ms must be between {MIN_POLL_INTERVAL_MS} and {MAX_POLL_INTERVAL_MS}"
             )));
         }
-        if !(MIN_HISTORY_SECONDS..=MAX_HISTORY_SECONDS).contains(&ui.history_seconds) {
+        if !(MIN_HISTORY_SECONDS..=MAX_HISTORY_SECONDS).contains(&self.history_seconds) {
             return Err(Error::ConfigInvalid(format!(
                 "ui.history_seconds must be between {MIN_HISTORY_SECONDS} and {MAX_HISTORY_SECONDS}"
             )));
         }
-        if crate::tui::theme::find(&ui.theme).is_none() {
+        if crate::tui::theme::find(&self.theme).is_none() {
             return Err(Error::ConfigInvalid(format!(
                 "ui.theme '{}' is not a known theme; run `obs-stats themes` to list them",
-                ui.theme
+                self.theme
             )));
         }
-        if crate::tui::view::View::from_id(&ui.start_view).is_none() {
+        if crate::tui::view::View::from_id(&self.start_view).is_none() {
             return Err(Error::ConfigInvalid(format!(
                 "ui.start_view '{}' is not a known view",
-                ui.start_view
+                self.start_view
             )));
         }
+        Ok(())
+    }
+}
 
-        let alerts = &self.alerts;
-        if !(MIN_ALERT_WINDOW_SECONDS..=MAX_ALERT_WINDOW_SECONDS).contains(&alerts.window_seconds) {
-            return Err(Error::ConfigInvalid(format!(
-                "alerts.window_seconds must be between {MIN_ALERT_WINDOW_SECONDS} and {MAX_ALERT_WINDOW_SECONDS}"
-            )));
-        }
-        if alerts.cooldown_seconds > MAX_ALERT_COOLDOWN_SECONDS {
-            return Err(Error::ConfigInvalid(format!(
-                "alerts.cooldown_seconds must be at most {MAX_ALERT_COOLDOWN_SECONDS}"
-            )));
-        }
-
+impl Config {
+    /// Check every invariant the rest of the program relies on.
+    ///
+    /// Returns the *first* problem found, phrased with the config key so the
+    /// user knows exactly which line to edit. The `?`s below preserve that
+    /// order: connection, then ui, then alerts.
+    pub fn validate(&self) -> Result<()> {
+        self.connection.validate()?;
+        self.ui.validate()?;
+        self.alerts.validate()?;
         Ok(())
     }
 }
