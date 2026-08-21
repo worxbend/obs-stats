@@ -99,7 +99,7 @@ async fn drain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::obs::client::{Inventory, PollData};
+    use crate::obs::client::{FaderState, Inventory, PollData};
     use crate::obs::stats::AudioInput;
 
     fn channel() -> (
@@ -133,10 +133,14 @@ mod tests {
         })))
         .await
         .unwrap();
-        // The probe arrives as a two-slot mute/volume payload.
-        tx.send(Update::Meters(vec![("Mic".to_string(), vec![0.0, -6.0])]))
-            .await
-            .unwrap();
+        // The fader position arrives on its own channel.
+        tx.send(Update::Faders(vec![FaderState {
+            name: "Mic".to_string(),
+            muted: Some(false),
+            volume_db: Some(-6.0),
+        }]))
+        .await
+        .unwrap();
 
         let snapshot = drain(&mut rx, Duration::from_secs(5)).await.unwrap();
         assert!((snapshot.inputs[0].volume_db + 6.0).abs() < 1e-6);

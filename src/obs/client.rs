@@ -62,8 +62,12 @@ pub enum Update {
     Poll(Box<PollData>),
     /// A slow inventory poll landed.
     Inventory(Box<Inventory>),
-    /// Fresh peak levels, keyed by input name.
-    Meters(Vec<(String, Vec<f32>)>),
+    /// Fresh peak levels from the high-rate `InputVolumeMeters` event.
+    Meters(Vec<MeterFrame>),
+    /// Mute and volume, from the follow-up batch issued after an inventory
+    /// poll. A separate message from [`Update::Meters`] because it carries
+    /// entirely different values on an entirely different cadence.
+    Faders(Vec<FaderState>),
     /// A notable OBS event, already rendered for the log view.
     Event { level: LogLevel, message: String },
     /// The session ended and will be retried.
@@ -77,6 +81,27 @@ pub enum Update {
         reason: String,
         hint: Option<&'static str>,
     },
+}
+
+/// One input's peak level per channel, as linear magnitudes in `0.0..=1.0`.
+///
+/// Arrives many times a second while audio is flowing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeterFrame {
+    pub name: String,
+    pub peaks: Vec<f32>,
+}
+
+/// One input's mixer position: whether it is muted and where its fader sits.
+///
+/// Arrives once per inventory poll. Either field is `None` when OBS did not
+/// answer that half of the pair — the decoders are total, so a missing field
+/// means "unknown", not "zero".
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaderState {
+    pub name: String,
+    pub muted: Option<bool>,
+    pub volume_db: Option<f64>,
 }
 
 /// Commands the UI can send back to the session task.
@@ -435,8 +460,8 @@ async fn handle_frame(
                     emit(update_tx, Update::Inventory(Box::new(inventory))).await;
                 }
                 REQUEST_ID_AUDIO => {
-                    if let Some(levels) = decode_audio_levels(&batch.results) {
-                        emit(update_tx, Update::Meters(levels)).await;
+                    if let Some(faders) = decode_audio_levels(&batch.results) {
+                        emit(update_tx, Update::Faders(faders)).await;
                     }
                 }
                 _ => {}
@@ -476,8 +501,8 @@ async fn handle_event(event: Event, update_tx: &mpsc::Sender<Update>) {
     // Volume meters are the only high-rate event; route them straight to the
     // meters channel instead of the log, or the log would be unreadable.
     if event.event_type == "InputVolumeMeters" {
-        if let Some(levels) = decode_meter_event(&data) {
-            emit(update_tx, Update::Meters(levels)).await;
+        if let Some(frames) = decode_meter_event(&data) {
+            emit(update_tx, Update::Meters(frames)).await;
         }
         return;
     }

@@ -21,7 +21,7 @@
 
 use serde_json::{Value, json};
 
-use crate::obs::client::{Inventory, LogLevel, PollData};
+use crate::obs::client::{FaderState, Inventory, LogLevel, MeterFrame, PollData};
 use crate::obs::protocol::{self, Envelope, Request, RequestBatch, RequestResponse};
 use crate::obs::stats::{
     AudioInput, RecordStatus, SceneList, Stats, StreamStatus, VideoSettings, is_audio_kind,
@@ -257,13 +257,13 @@ fn decode_input_list(data: &Value) -> Vec<AudioInput> {
 ///
 /// OBS sends `inputLevelsMul` as one array per channel, each holding
 /// `[magnitude, peak, input_peak]`; the dashboard shows the peak.
-pub(crate) fn decode_meter_event(data: &Value) -> Option<Vec<(String, Vec<f32>)>> {
+pub(crate) fn decode_meter_event(data: &Value) -> Option<Vec<MeterFrame>> {
     let inputs = data.get("inputs")?.as_array()?;
     let levels = inputs
         .iter()
         .filter_map(|input| {
             let name = input.get("inputName")?.as_str()?.to_string();
-            let channels = input
+            let peaks = input
                 .get("inputLevelsMul")?
                 .as_array()?
                 .iter()
@@ -275,7 +275,7 @@ pub(crate) fn decode_meter_event(data: &Value) -> Option<Vec<(String, Vec<f32>)>
                         .unwrap_or(0.0) as f32
                 })
                 .collect();
-            Some((name, channels))
+            Some(MeterFrame { name, peaks })
         })
         .collect();
     Some(levels)
@@ -286,46 +286,40 @@ pub(crate) fn decode_meter_event(data: &Value) -> Option<Vec<(String, Vec<f32>)>
 ///
 /// Mute is carried as `f32::NAN` in slot 0 when unknown; the app layer reads
 /// these through [`crate::metrics::Snapshot::apply_audio_probe`].
-pub(crate) fn decode_audio_levels(results: &[RequestResponse]) -> Option<Vec<(String, Vec<f32>)>> {
-    let mut probes: Vec<(String, Vec<f32>)> = Vec::new();
+pub(crate) fn decode_audio_levels(results: &[RequestResponse]) -> Option<Vec<FaderState>> {
+    let mut faders: Vec<FaderState> = Vec::new();
     for result in results {
         let Some(data) = result.ok_data() else {
             continue;
         };
+        // Each request in the audio batch is tagged `mute:<name>` or
+        // `vol:<name>`, so the two halves can be paired back up here. Input
+        // names may themselves contain a colon, hence `split_once`.
         let Some((tag, name)) = result.request_id.split_once(':') else {
             continue;
         };
-        let entry = match probes.iter_mut().find(|(existing, _)| existing == name) {
+        let entry = match faders.iter_mut().find(|fader| fader.name == name) {
             Some(entry) => entry,
             None => {
-                probes.push((name.to_string(), vec![f32::NAN, f32::NAN]));
-                probes.last_mut()?
+                faders.push(FaderState {
+                    name: name.to_string(),
+                    muted: None,
+                    volume_db: None,
+                });
+                faders.last_mut()?
             }
         };
         match tag {
-            "mute" => {
-                let muted = data.get("inputMuted").and_then(Value::as_bool);
-                entry.1[0] = match muted {
-                    Some(true) => 1.0,
-                    Some(false) => 0.0,
-                    None => f32::NAN,
-                };
-            }
-            "vol" => {
-                entry.1[1] = data
-                    .get("inputVolumeDb")
-                    .and_then(Value::as_f64)
-                    .map(|db| db as f32)
-                    .unwrap_or(f32::NAN);
-            }
+            "mute" => entry.muted = data.get("inputMuted").and_then(Value::as_bool),
+            "vol" => entry.volume_db = data.get("inputVolumeDb").and_then(Value::as_f64),
             _ => {}
         }
     }
 
-    if probes.is_empty() {
+    if faders.is_empty() {
         None
     } else {
-        Some(probes)
+        Some(faders)
     }
 }
 
@@ -505,8 +499,8 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(levels.len(), 1);
-        assert_eq!(levels[0].0, "Mic");
-        assert_eq!(levels[0].1, vec![0.5, 0.4]);
+        assert_eq!(levels[0].name, "Mic");
+        assert_eq!(levels[0].peaks, vec![0.5, 0.4]);
     }
 
     #[test]
@@ -520,38 +514,52 @@ mod tests {
         let levels =
             decode_meter_event(&json!({"inputs": [{"inputName": "Mic", "inputLevelsMul": []}]}))
                 .unwrap();
-        assert_eq!(levels[0].1, Vec::<f32>::new());
+        assert_eq!(levels[0].peaks, Vec::<f32>::new());
     }
 
     #[test]
-    fn audio_probe_merges_mute_and_volume_per_input() {
-        let probes = decode_audio_levels(&[
+    fn audio_batch_replies_merge_mute_and_volume_per_input() {
+        let faders = decode_audio_levels(&[
             response("GetInputMute", "mute:Mic", json!({"inputMuted": true})),
             response("GetInputVolume", "vol:Mic", json!({"inputVolumeDb": -6.5})),
         ])
         .unwrap();
-        assert_eq!(probes.len(), 1);
-        assert_eq!(probes[0].0, "Mic");
-        assert_eq!(probes[0].1[0], 1.0);
-        assert!((probes[0].1[1] + 6.5).abs() < 1e-5);
+        assert_eq!(faders.len(), 1);
+        assert_eq!(faders[0].name, "Mic");
+        assert_eq!(faders[0].muted, Some(true));
+        assert!((faders[0].volume_db.unwrap() + 6.5).abs() < 1e-9);
     }
 
     #[test]
-    fn audio_probe_handles_names_containing_a_colon() {
+    fn an_unanswered_half_of_the_pair_decodes_as_unknown() {
+        // Only the mute half replied; the volume stays `None` rather than
+        // becoming a zero the snapshot would apply as a real fader move.
+        let faders = decode_audio_levels(&[response(
+            "GetInputMute",
+            "mute:Mic",
+            json!({"inputMuted": true}),
+        )])
+        .unwrap();
+        assert_eq!(faders[0].muted, Some(true));
+        assert_eq!(faders[0].volume_db, None);
+    }
+
+    #[test]
+    fn audio_batch_replies_handle_names_containing_a_colon() {
         // split_once takes the first colon, so the tag stays intact and the
         // remainder — colons and all — is the input name.
-        let probes = decode_audio_levels(&[response(
+        let faders = decode_audio_levels(&[response(
             "GetInputMute",
             "mute:Mic: Main",
             json!({"inputMuted": false}),
         )])
         .unwrap();
-        assert_eq!(probes[0].0, "Mic: Main");
-        assert_eq!(probes[0].1[0], 0.0);
+        assert_eq!(faders[0].name, "Mic: Main");
+        assert_eq!(faders[0].muted, Some(false));
     }
 
     #[test]
-    fn audio_probe_is_none_when_nothing_decoded() {
+    fn audio_batch_replies_are_none_when_nothing_decoded() {
         assert!(decode_audio_levels(&[]).is_none());
         assert!(decode_audio_levels(&[failed("GetInputMute")]).is_none());
     }

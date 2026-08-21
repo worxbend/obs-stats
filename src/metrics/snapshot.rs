@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::metrics::alerts::{Alert, AlertConfig, Counters, Watcher};
 use crate::metrics::history::History;
-use crate::obs::client::{Inventory, LogLevel, PollData, Update};
+use crate::obs::client::{FaderState, Inventory, LogLevel, MeterFrame, PollData, Update};
 use crate::obs::stats::{
     AudioInput, RecordStatus, SceneList, Stats, StreamStatus, Version, VideoSettings,
 };
@@ -245,7 +245,8 @@ impl Snapshot {
             }
             Update::Poll(poll) => return self.apply_poll(*poll, now),
             Update::Inventory(inventory) => self.apply_inventory(*inventory),
-            Update::Meters(levels) => self.apply_meters(&levels),
+            Update::Meters(frames) => self.apply_meters(&frames),
+            Update::Faders(faders) => self.apply_faders(&faders),
             Update::Event { level, message } => self.push_log(level, message, now),
             Update::Disconnected {
                 reason,
@@ -393,23 +394,38 @@ impl Snapshot {
     /// by its two-slot payload whose entries are mute-as-`0.0`/`1.0` and a dB
     /// value; peaks are always linear `0.0..=1.0`. The dB slot is negative or
     /// NaN in practice, which is what disambiguates the two.
-    fn apply_meters(&mut self, levels: &[(String, Vec<f32>)]) {
-        for (name, values) in levels {
-            let Some(input) = self.inputs.iter_mut().find(|input| &input.name == name) else {
+    /// Fresh peak levels. An input we have never heard of is skipped: the
+    /// meter event can name an input that the next inventory poll has not
+    /// introduced yet.
+    fn apply_meters(&mut self, frames: &[MeterFrame]) {
+        for frame in frames {
+            let Some(input) = self.input_mut(&frame.name) else {
                 continue;
             };
-            if is_probe(values) {
-                if !values[0].is_nan() {
-                    input.muted = values[0] >= 0.5;
-                }
-                if !values[1].is_nan() {
-                    input.volume_db = f64::from(values[1]);
-                    input.volume_mul = db_to_mul(input.volume_db);
-                }
-            } else {
-                input.peaks = values.clone();
+            input.peaks = frame.peaks.clone();
+        }
+    }
+
+    /// Fresh mixer positions. `None` means OBS did not answer that half of
+    /// the mute/volume pair, so the previous value stands rather than being
+    /// clobbered with a zero.
+    fn apply_faders(&mut self, faders: &[FaderState]) {
+        for fader in faders {
+            let Some(input) = self.input_mut(&fader.name) else {
+                continue;
+            };
+            if let Some(muted) = fader.muted {
+                input.muted = muted;
+            }
+            if let Some(db) = fader.volume_db {
+                input.volume_db = db;
+                input.volume_mul = db_to_mul(db);
             }
         }
+    }
+
+    fn input_mut(&mut self, name: &str) -> Option<&mut AudioInput> {
+        self.inputs.iter_mut().find(|input| input.name == name)
     }
 
     fn on_connection_lost(&mut self) {
@@ -550,17 +566,6 @@ impl Snapshot {
     pub fn audio_inputs(&self) -> &[AudioInput] {
         &self.inputs
     }
-}
-
-/// Whether a `(name, values)` payload is a mute/volume probe rather than peaks.
-///
-/// Probes are exactly two slots and carry a dB figure — negative, zero, or
-/// NaN. Real peaks are linear magnitudes in `0.0..=1.0`, so a negative or
-/// NaN second slot cannot be a peak pair.
-fn is_probe(values: &[f32]) -> bool {
-    values.len() == 2
-        && (values[1].is_nan() || values[1] <= 0.0)
-        && (values[0].is_nan() || values[0] == 0.0 || values[0] == 1.0)
 }
 
 /// Convert a dB fader position to a linear multiplier.
@@ -952,7 +957,10 @@ mod tests {
             }],
             ..Inventory::default()
         });
-        snapshot.apply_meters(&[("Mic".to_string(), vec![0.4, 0.5])]);
+        snapshot.apply_meters(&[MeterFrame {
+            name: "Mic".to_string(),
+            peaks: vec![0.4, 0.5],
+        }]);
         assert_eq!(snapshot.inputs[0].peaks, vec![0.4, 0.5]);
 
         // A second inventory poll must not blank the meter.
@@ -994,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn mute_and_volume_probes_are_distinguished_from_peaks() {
+    fn faders_and_meters_update_separate_fields() {
         let mut snapshot = Snapshot::new(8);
         snapshot.apply_inventory(Inventory {
             inputs: vec![AudioInput {
@@ -1004,25 +1012,92 @@ mod tests {
             ..Inventory::default()
         });
 
-        snapshot.apply_meters(&[("Mic".to_string(), vec![1.0, -6.0])]);
+        snapshot.apply_faders(&[FaderState {
+            name: "Mic".to_string(),
+            muted: Some(true),
+            volume_db: Some(-6.0),
+        }]);
         assert!(snapshot.inputs[0].muted);
         assert!((snapshot.inputs[0].volume_db + 6.0).abs() < 1e-6);
         assert!(
             snapshot.inputs[0].peaks.is_empty(),
-            "a probe is not a peak frame"
+            "a fader position is not a peak frame"
         );
 
-        // A two-channel peak frame has positive magnitudes and must land in
-        // `peaks`, not be mistaken for a probe.
-        snapshot.apply_meters(&[("Mic".to_string(), vec![0.3, 0.6])]);
+        snapshot.apply_meters(&[MeterFrame {
+            name: "Mic".to_string(),
+            peaks: vec![0.3, 0.6],
+        }]);
         assert_eq!(snapshot.inputs[0].peaks, vec![0.3, 0.6]);
         assert!(snapshot.inputs[0].muted, "mute state survives a peak frame");
     }
 
     #[test]
+    fn a_silent_stereo_meter_frame_does_not_unmute_the_input() {
+        // Regression: peaks and fader positions used to share one channel and
+        // were told apart by their values, so digital silence on two channels
+        // — [0.0, 0.0] — was read as "unmuted, 0 dB" and wiped the real state.
+        let mut snapshot = Snapshot::new(8);
+        snapshot.apply_inventory(Inventory {
+            inputs: vec![AudioInput {
+                name: "Mic".into(),
+                ..AudioInput::default()
+            }],
+            ..Inventory::default()
+        });
+        snapshot.apply_faders(&[FaderState {
+            name: "Mic".to_string(),
+            muted: Some(true),
+            volume_db: Some(-12.0),
+        }]);
+
+        snapshot.apply_meters(&[MeterFrame {
+            name: "Mic".to_string(),
+            peaks: vec![0.0, 0.0],
+        }]);
+
+        assert!(snapshot.inputs[0].muted, "silence must not unmute");
+        assert!((snapshot.inputs[0].volume_db + 12.0).abs() < 1e-6);
+        assert_eq!(snapshot.inputs[0].peaks, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_fader_reply_missing_one_half_leaves_the_other_alone() {
+        let mut snapshot = Snapshot::new(8);
+        snapshot.apply_inventory(Inventory {
+            inputs: vec![AudioInput {
+                name: "Mic".into(),
+                ..AudioInput::default()
+            }],
+            ..Inventory::default()
+        });
+        snapshot.apply_faders(&[FaderState {
+            name: "Mic".to_string(),
+            muted: Some(true),
+            volume_db: Some(-6.0),
+        }]);
+
+        // Only the volume half answered this time.
+        snapshot.apply_faders(&[FaderState {
+            name: "Mic".to_string(),
+            muted: None,
+            volume_db: Some(-3.0),
+        }]);
+
+        assert!(
+            snapshot.inputs[0].muted,
+            "an unanswered half keeps its value"
+        );
+        assert!((snapshot.inputs[0].volume_db + 3.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn meters_for_unknown_inputs_are_ignored() {
         let mut snapshot = Snapshot::new(8);
-        snapshot.apply_meters(&[("Ghost".to_string(), vec![0.5])]);
+        snapshot.apply_meters(&[MeterFrame {
+            name: "Ghost".to_string(),
+            peaks: vec![0.5],
+        }]);
         assert!(snapshot.inputs.is_empty());
     }
 
@@ -1038,7 +1113,10 @@ mod tests {
             }],
             ..Inventory::default()
         });
-        snapshot.apply_meters(&[("Mic".to_string(), vec![0.9])]);
+        snapshot.apply_meters(&[MeterFrame {
+            name: "Mic".to_string(),
+            peaks: vec![0.9],
+        }]);
         snapshot.stream_bitrate = 6_000_000.0;
 
         snapshot.apply(

@@ -347,7 +347,7 @@ impl App {
         if self.paused
             && matches!(
                 update,
-                Update::Poll(_) | Update::Inventory(_) | Update::Meters(_)
+                Update::Poll(_) | Update::Inventory(_) | Update::Meters(_) | Update::Faders(_)
             )
         {
             return Vec::new();
