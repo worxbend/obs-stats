@@ -102,7 +102,7 @@ pub fn resolve_password(env_name: &str) -> Result<Option<Redacted>> {
         )));
     }
 
-    Ok(Some(Redacted(value)))
+    Ok(Some(Redacted::new(value)))
 }
 
 #[cfg(test)]

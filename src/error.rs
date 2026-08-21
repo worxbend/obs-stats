@@ -108,10 +108,21 @@ impl Error {
 ///
 /// Used for passwords so an accidental `{:?}` on a config struct — or a panic
 /// backtrace that formats one — cannot leak the secret into logs.
+///
+/// The field is private on purpose: the only way to read the secret back out
+/// is [`Redacted::expose`], which is easy to grep for when auditing where a
+/// password can reach.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Redacted(pub String);
+pub struct Redacted(String);
 
 impl Redacted {
+    /// Wrap a secret so it can no longer be printed by accident.
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self(secret.into())
+    }
+
+    /// Read the secret back out. Every call site is a place a password can
+    /// escape, so keep them few and obvious.
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -135,7 +146,7 @@ mod tests {
 
     #[test]
     fn redacted_never_prints_the_secret() {
-        let secret = Redacted("hunter2".to_string());
+        let secret = Redacted::new("hunter2");
         assert_eq!(format!("{secret:?}"), "<redacted>");
         assert_eq!(format!("{secret}"), "<redacted>");
         assert_eq!(secret.expose(), "hunter2");
