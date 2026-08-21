@@ -282,8 +282,11 @@ impl Snapshot {
         self.last_poll = Some(now);
 
         // A stream that just started defines a new baseline for the
-        // since-launch counters in GetStats.
-        if self.stream.active && !stream_was_active {
+        // since-launch counters in GetStats. A running stream with no
+        // baseline means the connection dropped and came back — the stream we
+        // are looking at now may not be the one we baselined against, so
+        // re-baseline here rather than trusting an edge we could not observe.
+        if self.stream.active && (!stream_was_active || self.stream_baseline.is_none()) {
             self.stream_baseline = Some(Baseline {
                 render: self.stats.render(),
                 output: self.stats.output(),
@@ -427,6 +430,12 @@ impl Snapshot {
     }
 
     fn on_connection_lost(&mut self) {
+        // While we were away the user may have stopped one stream and started
+        // another; the next poll would report `active` on both sides of the
+        // gap, hiding the restart. Drop the baseline so the first poll after
+        // reconnect takes a fresh one instead of reporting the old stream's
+        // losses as this stream's.
+        self.stream_baseline = None;
         self.stream_mark = None;
         self.record_mark = None;
         self.stream_bitrate = 0.0;
@@ -848,6 +857,64 @@ mod tests {
             start + Duration::from_secs(1),
         );
         assert_eq!(snapshot.session_render_skipped(), 42);
+    }
+
+    #[test]
+    fn a_stream_restart_hidden_by_a_disconnect_still_re_baselines() {
+        let mut snapshot = Snapshot::new(8);
+        let start = Instant::now();
+
+        // A stream is running and has skipped 500 frames since OBS launched.
+        let first = Stats {
+            render_skipped_frames: 500,
+            render_total_frames: 100_000,
+            ..Stats::default()
+        };
+        snapshot.apply(Update::Connected(Box::default()), start);
+        snapshot.apply(
+            poll(first, streaming(0), RecordStatus::default()),
+            start + Duration::from_secs(1),
+        );
+        assert_eq!(snapshot.session_render_skipped(), 0);
+
+        // The socket drops. While we are blind the user stops that stream and
+        // starts a new one, so `active` reads true on both sides of the gap.
+        snapshot.apply(
+            Update::Disconnected {
+                reason: "closed".into(),
+                hint: None,
+                retry_in: Duration::from_secs(1),
+            },
+            start + Duration::from_secs(2),
+        );
+        snapshot.apply(
+            Update::Connected(Box::default()),
+            start + Duration::from_secs(3),
+        );
+
+        // GetStats counters are cumulative since OBS launched, so the new
+        // stream inherits the 500. Its own losses start from this poll.
+        let after = Stats {
+            render_skipped_frames: 500,
+            render_total_frames: 120_000,
+            ..Stats::default()
+        };
+        snapshot.apply(
+            poll(after, streaming(0), RecordStatus::default()),
+            start + Duration::from_secs(4),
+        );
+        assert_eq!(snapshot.session_render_skipped(), 0);
+
+        let later = Stats {
+            render_skipped_frames: 507,
+            render_total_frames: 121_000,
+            ..Stats::default()
+        };
+        snapshot.apply(
+            poll(later, streaming(100), RecordStatus::default()),
+            start + Duration::from_secs(5),
+        );
+        assert_eq!(snapshot.session_render_skipped(), 7);
     }
 
     #[test]
