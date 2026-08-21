@@ -45,14 +45,66 @@ impl Stats {
         }
     }
 
+    /// The renderer's skipped/total pair, since OBS launched.
+    pub fn render(&self) -> FrameTally {
+        FrameTally {
+            skipped: self.render_skipped_frames,
+            total: self.render_total_frames,
+        }
+    }
+
+    /// The encoder's skipped/total pair, since OBS launched.
+    pub fn output(&self) -> FrameTally {
+        FrameTally {
+            skipped: self.output_skipped_frames,
+            total: self.output_total_frames,
+        }
+    }
+
     /// Share of rendered frames that were skipped, since OBS launched.
     pub fn render_skip_percent(&self) -> f64 {
-        ratio_percent(self.render_skipped_frames, self.render_total_frames)
+        self.render().percent()
     }
 
     /// Share of encoded frames that were skipped, since OBS launched.
     pub fn output_skip_percent(&self) -> f64 {
-        ratio_percent(self.output_skipped_frames, self.output_total_frames)
+        self.output().percent()
+    }
+}
+
+/// A skipped-out-of-total frame count.
+///
+/// The two numbers are meaningless apart — a count of 900 skipped frames is
+/// a catastrophe out of 1,000 and a rounding error out of 10,000,000 — so
+/// they travel together and the rate is derived rather than stored.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrameTally {
+    pub skipped: u64,
+    pub total: u64,
+}
+
+impl FrameTally {
+    /// Skipped frames as a percentage of the total. Zero total reads as 0.0
+    /// rather than dividing by zero: before the first frame there is nothing
+    /// to be worried about yet.
+    pub fn percent(self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.skipped as f64 / self.total as f64) * 100.0
+        }
+    }
+
+    /// This tally measured from `baseline` instead of from OBS launch.
+    ///
+    /// Saturating on purpose: a counter that went backwards means the output
+    /// restarted, and that must read as "nothing yet this session" rather
+    /// than underflowing into an enormous number.
+    pub fn since(self, baseline: FrameTally) -> FrameTally {
+        FrameTally {
+            skipped: self.skipped.saturating_sub(baseline.skipped),
+            total: self.total.saturating_sub(baseline.total),
+        }
     }
 }
 
@@ -84,9 +136,19 @@ impl StreamStatus {
         }
     }
 
+    /// Frames the network dropped out of frames sent, since the stream
+    /// started. Unlike the counters in [`Stats`], these are already scoped to
+    /// the current stream by OBS.
+    pub fn dropped(&self) -> FrameTally {
+        FrameTally {
+            skipped: self.skipped_frames,
+            total: self.total_frames,
+        }
+    }
+
     /// Share of frames dropped by the network, since the stream started.
     pub fn drop_percent(&self) -> f64 {
-        ratio_percent(self.skipped_frames, self.total_frames)
+        self.dropped().percent()
     }
 }
 
@@ -267,14 +329,6 @@ pub fn is_audio_kind(kind: &str) -> bool {
         || kind.contains("ffmpeg_source")
         || kind.contains("browser_source")
         || kind.contains("vlc_source")
-}
-
-fn ratio_percent(part: u64, whole: u64) -> f64 {
-    if whole == 0 {
-        0.0
-    } else {
-        (part as f64 / whole as f64) * 100.0
-    }
 }
 
 fn number(value: &Value, key: &str) -> f64 {

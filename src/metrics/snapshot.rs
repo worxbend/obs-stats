@@ -12,7 +12,7 @@ use crate::metrics::alerts::{Alert, AlertConfig, Counters, Watcher};
 use crate::metrics::history::History;
 use crate::obs::client::{FaderState, Inventory, LogLevel, MeterFrame, PollData, Update};
 use crate::obs::stats::{
-    AudioInput, RecordStatus, SceneList, Stats, StreamStatus, Version, VideoSettings,
+    AudioInput, FrameTally, RecordStatus, SceneList, Stats, StreamStatus, Version, VideoSettings,
 };
 
 /// How many log lines the event view retains.
@@ -135,10 +135,8 @@ impl Histories {
 /// during this stream" rather than "dropped since OBS launched".
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Baseline {
-    render_skipped: u64,
-    render_total: u64,
-    output_skipped: u64,
-    output_total: u64,
+    render: FrameTally,
+    output: FrameTally,
 }
 
 /// Byte counter and timestamp of the previous poll, for rate derivation.
@@ -287,10 +285,8 @@ impl Snapshot {
         // since-launch counters in GetStats.
         if self.stream.active && !stream_was_active {
             self.stream_baseline = Some(Baseline {
-                render_skipped: self.stats.render_skipped_frames,
-                render_total: self.stats.render_total_frames,
-                output_skipped: self.stats.output_skipped_frames,
-                output_total: self.stats.output_total_frames,
+                render: self.stats.render(),
+                output: self.stats.output(),
             });
             self.stream_mark = None;
         } else if !self.stream.active && stream_was_active {
@@ -462,55 +458,50 @@ impl Snapshot {
             .map(|last| now.saturating_duration_since(last))
     }
 
+    /// One counter pair measured over the current stream rather than since
+    /// OBS launched.
+    ///
+    /// `pick` selects which pair to read, from both the live stats and the
+    /// baseline captured when the stream started. With no stream running
+    /// there is no baseline, and the since-launch total is the only
+    /// meaningful number, so it is returned unchanged.
+    fn session(
+        &self,
+        pick: fn(&Stats) -> FrameTally,
+        of_baseline: fn(&Baseline) -> FrameTally,
+    ) -> FrameTally {
+        let live = pick(&self.stats);
+        match &self.stream_baseline {
+            Some(baseline) => live.since(of_baseline(baseline)),
+            None => live,
+        }
+    }
+
     /// Frames the renderer skipped since the current stream started.
     ///
     /// Falls back to the since-launch total when no stream is running, which
     /// is the only meaningful number in that state.
     pub fn session_render_skipped(&self) -> u64 {
-        match self.stream_baseline {
-            Some(baseline) => self
-                .stats
-                .render_skipped_frames
-                .saturating_sub(baseline.render_skipped),
-            None => self.stats.render_skipped_frames,
-        }
+        self.session(Stats::render, |baseline| baseline.render)
+            .skipped
     }
 
     /// Frames the encoder skipped since the current stream started.
     pub fn session_output_skipped(&self) -> u64 {
-        match self.stream_baseline {
-            Some(baseline) => self
-                .stats
-                .output_skipped_frames
-                .saturating_sub(baseline.output_skipped),
-            None => self.stats.output_skipped_frames,
-        }
+        self.session(Stats::output, |baseline| baseline.output)
+            .skipped
     }
 
     /// Render-skip rate over the current stream, as a percentage.
     pub fn session_render_skip_percent(&self) -> f64 {
-        match self.stream_baseline {
-            Some(baseline) => percent(
-                self.session_render_skipped(),
-                self.stats
-                    .render_total_frames
-                    .saturating_sub(baseline.render_total),
-            ),
-            None => self.stats.render_skip_percent(),
-        }
+        self.session(Stats::render, |baseline| baseline.render)
+            .percent()
     }
 
     /// Encoder-skip rate over the current stream, as a percentage.
     pub fn session_output_skip_percent(&self) -> f64 {
-        match self.stream_baseline {
-            Some(baseline) => percent(
-                self.session_output_skipped(),
-                self.stats
-                    .output_total_frames
-                    .saturating_sub(baseline.output_total),
-            ),
-            None => self.stats.output_skip_percent(),
-        }
+        self.session(Stats::output, |baseline| baseline.output)
+            .percent()
     }
 
     /// Achieved FPS as a fraction of the configured target, `0.0..=1.0`.
@@ -596,14 +587,6 @@ fn derive_bitrate(mark: &mut Option<ByteMark>, bytes: u64, now: Instant) -> f64 
     };
     *mark = Some(ByteMark { bytes, at: now });
     rate
-}
-
-fn percent(part: u64, whole: u64) -> f64 {
-    if whole == 0 {
-        0.0
-    } else {
-        (part as f64 / whole as f64) * 100.0
-    }
 }
 
 #[cfg(test)]
