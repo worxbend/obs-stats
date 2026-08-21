@@ -242,7 +242,20 @@ async fn session(
     command_rx: &mut mpsc::Receiver<Command>,
 ) -> Result<Outcome> {
     let mut socket = connect(params).await?;
-    let version = handshake(&mut socket, params).await?;
+    // The websocket being open says nothing about OBS answering on it: a
+    // proxy or a half-started OBS can accept the TCP connection and then
+    // never send `Hello`. Without a deadline `handshake` would wait forever
+    // and the dashboard would sit on "connecting" instead of failing over to
+    // the retry loop, so give it the same budget as the connect itself.
+    let version = tokio::time::timeout(params.connect_timeout, handshake(&mut socket, params))
+        .await
+        .map_err(|_| Error::ConnectionFailed {
+            url: params.url.clone(),
+            reason: format!(
+                "handshake timed out after {}ms",
+                params.connect_timeout.as_millis()
+            ),
+        })??;
 
     if update_tx
         .send(Update::Connected(Box::new(version)))
