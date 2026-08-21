@@ -14,6 +14,7 @@ src/
               command (`:` registry), views/, widgets/, run (terminal)
   notify.rs   desktop notifications, on their own thread
   probe.rs    one-shot collection, shared by `once` and the screenshot generator
+  report.rs   the JSON shape `once` prints — a public contract
   cli.rs      clap definitions and flag→config layering
 examples/
   screenshot.rs   renders real frames to docs/images/*.svg
