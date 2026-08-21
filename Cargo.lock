@@ -1286,7 +1286,6 @@ dependencies = [
 name = "obs-stats"
 version = "0.3.0"
 dependencies = [
- "anyhow",
  "base64",
  "clap",
  "crossterm",

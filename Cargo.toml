@@ -27,7 +27,6 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.30"
 crossterm = { version = "0.29", features = ["event-stream"] }
 thiserror = "2"
-anyhow = "1"
 directories = "5"
 sha2 = "0.10"
 base64 = "0.22"
