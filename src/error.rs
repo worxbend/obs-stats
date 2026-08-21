@@ -41,13 +41,6 @@ pub enum Error {
     #[error("OBS did not answer {request} within {timeout_ms}ms")]
     RequestTimeout { request: String, timeout_ms: u64 },
 
-    #[error("OBS request {request} failed (code {code}){}", detail(.comment))]
-    RequestFailed {
-        request: String,
-        code: u32,
-        comment: Option<String>,
-    },
-
     #[error("unexpected message from OBS: {0}")]
     Protocol(String),
 
@@ -56,13 +49,6 @@ pub enum Error {
 
     #[error("{0}")]
     Io(#[from] std::io::Error),
-}
-
-fn detail(comment: &Option<String>) -> String {
-    match comment {
-        Some(comment) if !comment.is_empty() => format!(": {comment}"),
-        _ => String::new(),
-    }
 }
 
 impl Error {
@@ -75,7 +61,7 @@ impl Error {
             Error::ConfigInvalid(_) | Error::ConfigRead(_) | Error::ConfigWrite(_) => 2,
             Error::ConnectionFailed { .. } | Error::Disconnected | Error::ConnectionLost(_) => 3,
             Error::AuthFailed | Error::AuthRequired => 4,
-            Error::RequestTimeout { .. } | Error::RequestFailed { .. } | Error::Protocol(_) => 5,
+            Error::RequestTimeout { .. } | Error::Protocol(_) => 5,
             Error::Terminal(_) | Error::Io(_) => 1,
         }
     }
@@ -96,7 +82,6 @@ impl Error {
             | Error::ConfigInvalid(_)
             | Error::ConfigRead(_)
             | Error::ConfigWrite(_)
-            | Error::RequestFailed { .. }
             | Error::Protocol(_)
             | Error::Terminal(_) => false,
         }
@@ -187,22 +172,5 @@ mod tests {
         assert_eq!(Error::Disconnected.exit_code(), 3);
         assert_eq!(Error::AuthFailed.exit_code(), 4);
         assert_eq!(Error::Protocol("x".into()).exit_code(), 5);
-    }
-
-    #[test]
-    fn request_failed_appends_comment_when_present() {
-        let with = Error::RequestFailed {
-            request: "GetStats".into(),
-            code: 604,
-            comment: Some("no active output".into()),
-        };
-        assert!(with.to_string().ends_with(": no active output"));
-
-        let without = Error::RequestFailed {
-            request: "GetStats".into(),
-            code: 604,
-            comment: None,
-        };
-        assert!(without.to_string().ends_with("(code 604)"));
     }
 }
