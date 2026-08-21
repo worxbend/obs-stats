@@ -13,6 +13,7 @@ use crate::metrics::{Health, Snapshot};
 use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::tui::views;
 use crate::tui::views::loss::Loss;
 use crate::tui::views::{NARROW_WIDTH, axis_bitrate, bar_width, line_chart, sparkline, verdict};
 use crate::tui::widgets::chrome;
@@ -49,18 +50,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .areas(area)
     };
 
-    render_cards(frame, top, app, narrow);
-    render_outputs(frame, middle, app, narrow);
+    render_cards(frame, top, app);
+    render_outputs(frame, middle, app);
     render_bitrate(frame, bottom, app);
 }
 
 /// System / Video / Health, side by side or stacked.
-fn render_cards(frame: &mut Frame, area: Rect, app: &App, narrow: bool) {
-    let regions = if narrow {
-        Layout::vertical([Constraint::Ratio(1, 3); 3]).split(area)
-    } else {
-        Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(area)
-    };
+fn render_cards(frame: &mut Frame, area: Rect, app: &App) {
+    let regions = views::deck(
+        area,
+        &[Constraint::Ratio(1, 3); 3],
+        &[Constraint::Ratio(1, 3); 3],
+    );
 
     system_card(frame, regions[0], app);
     video_card(frame, regions[1], app);
@@ -296,12 +297,12 @@ pub fn health_rows(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
 }
 
 /// Stream and recording cards.
-fn render_outputs(frame: &mut Frame, area: Rect, app: &App, narrow: bool) {
-    let regions = if narrow {
-        Layout::vertical([Constraint::Ratio(1, 2); 2]).split(area)
-    } else {
-        Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(area)
-    };
+fn render_outputs(frame: &mut Frame, area: Rect, app: &App) {
+    let regions = views::deck(
+        area,
+        &[Constraint::Ratio(1, 2); 2],
+        &[Constraint::Ratio(1, 2); 2],
+    );
 
     let theme = app.theme;
     let snapshot = &app.snapshot;

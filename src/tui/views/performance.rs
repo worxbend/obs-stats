@@ -13,8 +13,9 @@ use ratatui::widgets::Paragraph;
 use crate::metrics::Snapshot;
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::tui::views;
 use crate::tui::views::loss::Loss;
-use crate::tui::views::{NARROW_WIDTH, axis_count, axis_millis, bar_width, line_chart};
+use crate::tui::views::{axis_count, axis_millis, bar_width, line_chart};
 use crate::tui::widgets::chrome;
 use crate::util;
 
@@ -27,11 +28,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let [charts, counters] =
         Layout::vertical([Constraint::Min(8), Constraint::Length(9)]).areas(area);
 
-    let chart_regions = if area.width < NARROW_WIDTH {
-        Layout::vertical([Constraint::Ratio(1, 2); 2]).split(charts)
-    } else {
-        Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(charts)
-    };
+    let chart_regions = views::deck(
+        charts,
+        &[Constraint::Ratio(1, 2); 2],
+        &[Constraint::Ratio(1, 2); 2],
+    );
 
     let target = snapshot.video.target_fps();
     let fps_block = chrome::panel_with_note(

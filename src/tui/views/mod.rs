@@ -8,8 +8,10 @@ pub mod performance;
 pub mod scenes;
 pub mod stream;
 
+use std::rc::Rc;
+
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols;
 use ratatui::text::{Line, Span};
@@ -23,6 +25,22 @@ use crate::tui::widgets::chrome;
 
 /// Below this width the three-column decks fold into a single column.
 pub const NARROW_WIDTH: u16 = 96;
+
+/// Lay a deck of panels out side by side, or stacked when the terminal is too
+/// narrow for them.
+///
+/// Four decks make this same decision, and before this they each spelled it
+/// out with their own `if area.width < NARROW_WIDTH` — so the fold-to-one-column
+/// rule was four copies that had to agree. `wide` and `narrow` are the
+/// constraints for each orientation; they differ per deck, which is the only
+/// thing that ever varied.
+pub fn deck(area: Rect, wide: &[Constraint], narrow: &[Constraint]) -> Rc<[Rect]> {
+    if area.width < NARROW_WIDTH {
+        Layout::vertical(narrow).split(area)
+    } else {
+        Layout::horizontal(wide).split(area)
+    }
+}
 
 /// Draw the body of whichever view is active.
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {

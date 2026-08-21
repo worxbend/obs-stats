@@ -9,8 +9,9 @@ use crate::metrics::Snapshot;
 use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::tui::views;
 use crate::tui::views::loss::Loss;
-use crate::tui::views::{NARROW_WIDTH, axis_bitrate, axis_percent, line_chart};
+use crate::tui::views::{axis_bitrate, axis_percent, line_chart};
 use crate::tui::widgets::chrome;
 use crate::util;
 
@@ -23,11 +24,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let [charts, details] =
         Layout::vertical([Constraint::Min(8), Constraint::Length(10)]).areas(area);
 
-    let chart_regions = if area.width < NARROW_WIDTH {
-        Layout::vertical([Constraint::Ratio(1, 2); 2]).split(charts)
-    } else {
-        Layout::horizontal([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)]).split(charts)
-    };
+    let chart_regions = views::deck(
+        charts,
+        &[Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)],
+        &[Constraint::Ratio(1, 2); 2],
+    );
 
     let bitrate_block = chrome::panel_with_note(
         "Bitrate",
