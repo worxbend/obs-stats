@@ -323,7 +323,7 @@ Exit codes are stable:
 | `2` | Invalid configuration or flags |
 | `3` | Could not connect / connection lost |
 | `4` | Authentication failed or required |
-| `5` | OBS request failed, timed out, or spoke unexpectedly |
+| `5` | OBS timed out or spoke unexpectedly |
 
 ---
 
