@@ -22,8 +22,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(top);
 
     let identity = identity(app);
-    let (status, alert_span) = status_with_targets(app);
-    let alert_rect = alert_span.and_then(|index| span_rect(&status, index, right));
+    let (status, alert_index) = status(app);
+    let alert_rect = alert_index.and_then(|index| span_rect(&status, index, right));
 
     frame.render_widget(Paragraph::new(identity), left);
     frame.render_widget(Paragraph::new(status).alignment(Alignment::Right), right);
@@ -32,9 +32,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.regions.hits.push((rect, Hit::Alerts));
     }
 
-    let glyphs = chrome::glyphs(app.unicode);
     let divider = if app.unicode { "─" } else { "-" };
-    let _ = glyphs;
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             divider.repeat(rule.width as usize),
@@ -108,24 +106,14 @@ fn span_rect(line: &Line<'static>, index: usize, area: Rect) -> Option<Rect> {
     })
 }
 
-/// The status line, with the alert counter's span index when one is shown.
-fn status_with_targets(app: &App) -> (Line<'static>, Option<usize>) {
-    let line = status(app);
-    // The counter is the only clickable piece, and it is followed by a
-    // separator dot, so it is the span before the last dot when present.
-    if app.alert_count == 0 {
-        return (line, None);
-    }
-    let marker = if app.unicode { "▲" } else { "!" };
-    let index = line
-        .spans
-        .iter()
-        .position(|span| span.content.starts_with(marker));
-    (line, index)
-}
-
 /// Right-hand side: live badges, then the connection chip.
-fn status(app: &App) -> Line<'static> {
+///
+/// Also returns which span holds the alert counter, when one is shown. The
+/// counter is the only clickable piece of the status line, and it is recorded
+/// as it is built — the alternative, searching the finished line for its
+/// marker glyph, means the click target depends on the rendered text and
+/// breaks the moment two spans start with the same character.
+fn status(app: &App) -> (Line<'static>, Option<usize>) {
     let theme = app.theme;
     let snapshot = &app.snapshot;
     let mut spans = Vec::new();
@@ -178,7 +166,9 @@ fn status(app: &App) -> Line<'static> {
 
     // Count of everything raised this session. The banner expires, but the
     // fact that frames were lost should not disappear with it.
+    let mut alert_index = None;
     if app.alert_count > 0 {
+        alert_index = Some(spans.len());
         spans.push(Span::styled(
             format!(
                 "{} {}",
@@ -198,7 +188,7 @@ fn status(app: &App) -> Line<'static> {
         theme,
         app.unicode,
     ));
-    Line::from(spans)
+    (Line::from(spans), alert_index)
 }
 
 fn connection_chip(
@@ -282,11 +272,11 @@ mod tests {
     #[test]
     fn the_connection_chip_reflects_each_state() {
         let mut app = app();
-        assert!(line_text(&status(&app)).contains("CONNECTING"));
+        assert!(line_text(&status(&app).0).contains("CONNECTING"));
 
         app.snapshot.connection = ConnectionState::Connected;
         app.snapshot.polls = 42;
-        let connected = line_text(&status(&app));
+        let connected = line_text(&status(&app).0);
         assert!(connected.contains("CONNECTED"));
         assert!(
             connected.contains("#42"),
@@ -298,7 +288,7 @@ mod tests {
             hint: None,
             retry_in: Duration::from_secs(2),
         };
-        let offline = line_text(&status(&app));
+        let offline = line_text(&status(&app).0);
         assert!(offline.contains("OFFLINE"));
         assert!(!offline.contains('#'), "no poll count while offline");
     }
@@ -307,7 +297,7 @@ mod tests {
     fn retry_attempts_are_numbered_in_the_chip() {
         let mut app = app();
         app.snapshot.connection = ConnectionState::Connecting { attempt: 3 };
-        assert!(line_text(&status(&app)).contains("RETRY #3"));
+        assert!(line_text(&status(&app).0).contains("RETRY #3"));
     }
 
     #[test]
@@ -319,7 +309,7 @@ mod tests {
             duration_ms: 3_723_000,
             ..StreamStatus::default()
         };
-        let rendered = line_text(&status(&app));
+        let rendered = line_text(&status(&app).0);
         assert!(rendered.contains("LIVE"));
         assert!(rendered.contains("1:02:03"));
     }
@@ -332,7 +322,7 @@ mod tests {
             reconnecting: true,
             ..StreamStatus::default()
         };
-        let rendered = line_text(&status(&app));
+        let rendered = line_text(&status(&app).0);
         assert!(rendered.contains("RECONNECTING"));
         assert!(!rendered.contains("● LIVE"));
     }
@@ -348,7 +338,7 @@ mod tests {
             active: true,
             ..RecordStatus::default()
         };
-        let rendered = line_text(&status(&app));
+        let rendered = line_text(&status(&app).0);
         assert!(rendered.contains("LIVE"));
         assert!(rendered.contains("REC"));
     }
@@ -361,27 +351,38 @@ mod tests {
             paused: true,
             ..RecordStatus::default()
         };
-        assert!(line_text(&status(&app)).contains("REC PAUSED"));
+        assert!(line_text(&status(&app).0).contains("REC PAUSED"));
     }
 
     #[test]
     fn raised_alerts_leave_a_counter_in_the_header() {
         let mut app = app();
-        assert!(!line_text(&status(&app)).contains('▲'));
+        assert!(!line_text(&status(&app).0).contains('▲'));
 
         app.alert_count = 3;
-        let rendered = line_text(&status(&app));
+        let rendered = line_text(&status(&app).0);
         assert!(rendered.contains("▲ 3"), "{rendered}");
 
         // And the ASCII form avoids the glyph.
         app.unicode = false;
-        assert!(line_text(&status(&app)).contains("! 3"));
+        assert!(line_text(&status(&app).0).contains("! 3"));
+
+        // The counter is the click target, so the span index has to come back
+        // with it — and there must be nothing to click when nothing was
+        // raised.
+        assert!(status(&app).1.is_some(), "the counter must be clickable");
+        app.alert_count = 0;
+        assert_eq!(
+            status(&app).1,
+            None,
+            "no counter drawn means no click target"
+        );
     }
 
     #[test]
     fn idle_outputs_show_no_badges() {
         let app = app();
-        let rendered = line_text(&status(&app));
+        let rendered = line_text(&status(&app).0);
         assert!(!rendered.contains("LIVE"));
         assert!(!rendered.contains("REC"));
     }
