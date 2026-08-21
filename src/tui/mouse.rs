@@ -178,17 +178,20 @@ fn tab_at(app: &App, column: u16) -> Option<View> {
     None
 }
 
-/// Display width of one tab's label, matching what [`ui`] renders.
+/// Display width of one tab, derived from the label the renderer draws.
 fn tab_label_width(view: View, show_icons: bool) -> u16 {
-    // "N " prefix, then the title, plus "icon " when icons are on. The icons
-    // are wide glyphs that occupy two columns.
-    let icon = if show_icons { 3 } else { 0 };
-    2 + icon + view.title().chars().count() as u16
+    // The `"N "` number prefix, then whatever `View::tab_label` produced.
+    // Every icon is a single-width glyph — an invariant the glyph tests
+    // enforce — so counting `char`s is counting columns.
+    2 + view.tab_label(show_icons).chars().count() as u16
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use crate::config::Config;
     use crate::tui::ui;
@@ -198,9 +201,6 @@ mod tests {
     fn app() -> App {
         App::new(Config::default())
     }
-
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
 
     /// Draw one frame, so the app's click regions describe something real.
     ///
@@ -539,5 +539,45 @@ mod tests {
         let without = tab_label_width(View::Overview, false);
         assert!(without < with);
         assert_eq!(without, 2 + View::Overview.title().len() as u16);
+    }
+
+    /// Render a real frame and return the tab-strip row as `(text, x-offset)`.
+    fn tab_row(app: &mut App, show_icons: bool) -> String {
+        app.show_icons = show_icons;
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal.draw(|frame| ui::draw(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .find(|row| row.contains(View::Overview.title()) && row.contains(View::Log.title()))
+            .expect("the tab strip should be on exactly one row")
+    }
+
+    #[test]
+    fn every_tab_title_is_hit_at_the_column_it_was_drawn_at() {
+        for show_icons in [true, false] {
+            let mut app = app();
+            let row = tab_row(&mut app, show_icons);
+            for view in View::ALL {
+                let start = row
+                    .find(view.title())
+                    .unwrap_or_else(|| panic!("{} is not in the tab strip", view.title()));
+                // `find` counts bytes; the strip can hold multi-byte icons.
+                let column = row[..start].chars().count() as u16;
+                for offset in 0..view.title().chars().count() as u16 {
+                    assert_eq!(
+                        tab_at(&app, column + offset),
+                        Some(view),
+                        "icons={show_icons}: column {} sits on {} but hit-tested elsewhere",
+                        column + offset,
+                        view.title()
+                    );
+                }
+            }
+        }
     }
 }

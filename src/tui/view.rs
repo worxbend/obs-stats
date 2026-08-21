@@ -68,6 +68,20 @@ impl View {
         }
     }
 
+    /// The tab-strip label: the icon, a space, and the title — or just the
+    /// title when icons are off.
+    ///
+    /// Both the renderer and mouse hit-testing go through this, so the strip
+    /// cannot be drawn one way and clicked another. It excludes the `"N "`
+    /// number prefix, which `ui::render_tabs` adds as its own span.
+    pub fn tab_label(self, show_icons: bool) -> String {
+        if show_icons {
+            format!("{} {}", self.icon(), self.title())
+        } else {
+            self.title().to_string()
+        }
+    }
+
     /// One-line description, shown in the help overlay.
     pub fn description(self) -> &'static str {
         match self {

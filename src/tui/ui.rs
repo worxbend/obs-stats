@@ -143,14 +143,9 @@ fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(index, view)| {
-            let label = if app.show_icons {
-                format!("{} {}", view.icon(), view.title())
-            } else {
-                view.title().to_string()
-            };
             Line::from(vec![
                 Span::styled(format!("{} ", index + 1), Style::default().fg(theme.border)),
-                Span::raw(label),
+                Span::raw(view.tab_label(app.show_icons)),
             ])
         })
         .collect();
