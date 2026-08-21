@@ -6,7 +6,8 @@ A btop-style terminal dashboard for OBS Studio. Single Rust binary, no daemon.
 
 ```
 src/
-  obs/        obs-websocket 5.x: protocol, auth, session task, typed payloads
+  obs/        obs-websocket 5.x: protocol, auth, session task (client),
+              request building and total decoding (codec), typed payloads
   metrics/    Snapshot (the model), History (ring buffers), alerts, derived rates
   config/     YAML schema, XDG paths, loading, secret resolution
   tui/        app (state machine), keys (keymap), command (`:` registry),
