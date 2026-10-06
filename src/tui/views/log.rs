@@ -79,6 +79,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.selection(View::Log),
         &mut state,
         theme,
+        app.unicode,
     );
     app.put_list_state(View::Log, inner, state);
 }

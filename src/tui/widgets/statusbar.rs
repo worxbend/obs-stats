@@ -134,12 +134,9 @@ fn hints(app: &App) -> Line<'static> {
                 Style::default().fg(theme.border),
             ));
         }
-        spans.push(Span::styled(
-            key.to_string(),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ));
+        // The key is a keycap chip, the action plain text beside it — the
+        // same visual language as the which-key popup.
+        spans.extend(chrome::kbd(key, theme));
         spans.push(Span::styled(
             format!(" {label}"),
             Style::default().fg(theme.muted),
@@ -181,13 +178,7 @@ fn state(app: &App) -> (Line<'static>, Vec<(usize, Hit)>) {
     // Geometric Shapes `--ascii` avoids, but the fallback is spelt out anyway.
     targets.push((spans.len(), Hit::Pause));
     if app.paused {
-        spans.push(Span::styled(
-            "PAUSED",
-            Style::default()
-                .fg(theme.highlight_fg)
-                .bg(theme.warning)
-                .add_modifier(Modifier::BOLD),
-        ));
+        spans.extend(chrome::badge("PAUSED", theme.warning, theme));
     } else {
         spans.push(Span::styled(
             if app.unicode { "‖" } else { "||" },

@@ -92,7 +92,7 @@ fn render_completions(
     let block = chrome::panel_with_note(
         "Completions",
         format!("{}", completions.len()),
-        false,
+        true,
         app.theme,
         app.unicode,
     );

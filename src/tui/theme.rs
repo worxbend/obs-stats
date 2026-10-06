@@ -516,6 +516,104 @@ impl Theme {
             self.success
         }
     }
+
+    /// Whether the theme paints no background of its own (the `mono`
+    /// palette). Widgets check this to skip fills — a badge that would
+    /// reverse a coloured background onto the user's own terminal falls back
+    /// to coloured text instead.
+    pub fn flat(&self) -> bool {
+        self.bg == Color::Reset
+    }
+
+    /// Panel and card fill: a whisper of the foreground raised over the
+    /// background, so surfaces read as layered without a hard edge. On a
+    /// `flat` theme this is `Color::Reset` — the terminal's own background is
+    /// the surface.
+    pub fn surface(&self) -> Color {
+        raise(self.bg, self.fg, 0.03)
+    }
+
+    /// Overlay fill: one step more elevated than [`Theme::surface`], so a
+    /// modal floats above the panels beneath it.
+    pub fn surface_hi(&self) -> Color {
+        raise(self.bg, self.fg, 0.07)
+    }
+
+    /// The empty portion of bars, meters and scroll tracks: visible enough to
+    /// show the scale, quiet enough not to be mistaken for data.
+    pub fn track(&self) -> Color {
+        raise(self.bg, self.fg, 0.12)
+    }
+
+    /// `color` dimmed toward the background — `t` of 0 is the colour itself,
+    /// 1 is the background. Used for gradient tails and de-emphasised copies
+    /// of a semantic colour that must stay related to it.
+    pub fn fade(&self, color: Color, t: f32) -> Color {
+        blend(color, self.bg, t)
+    }
+
+    /// The brand gradient: accent flowing into the secondary accent. `t` is
+    /// the position along the run, 0.0..=1.0 — the header rule and other
+    /// wide accents sample it per cell.
+    pub fn gradient(&self, t: f32) -> Color {
+        blend(self.accent, self.accent_alt, t)
+    }
+
+    /// A foreground guaranteed readable when drawn *on* `color` — the rule
+    /// behind badges, pills and the active tab. Picks between the theme's own
+    /// background and foreground by the colour's luminance, so the answer
+    /// always belongs to the palette.
+    pub fn on_color(&self, color: Color) -> Color {
+        match color {
+            Color::Rgb(r, g, b) => {
+                let luminance =
+                    (0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b)) / 255.0;
+                if luminance > 0.5 {
+                    // A light pill takes dark text: the theme's background if
+                    // it is one, black otherwise.
+                    if self.flat() { Color::Black } else { self.bg }
+                } else if self.flat() {
+                    Color::White
+                } else {
+                    self.fg
+                }
+            }
+            // ANSI and named colours carry no channels; the theme's highlight
+            // pair is the readable-on-anything answer it ships with.
+            _ => self.highlight_fg,
+        }
+    }
+
+    /// Every colour a widget may legitimately paint as a *background*.
+    ///
+    /// `no_widget_punches_a_hole_in_the_themed_background` asserts against
+    /// this list: anything painted outside it is either `Color::Reset`
+    /// leaking the terminal's wallpaper through the theme, or a one-off that
+    /// belongs in the design system instead.
+    pub fn is_background(&self, color: Color) -> bool {
+        color == self.bg
+            || color == self.surface()
+            || color == self.surface_hi()
+            || color == self.track()
+            || color == self.highlight_bg
+            || color == self.accent
+            || color == self.accent_alt
+            || color == self.success
+            || color == self.warning
+            || color == self.danger
+            || color == self.info
+    }
+}
+
+/// Raise `fg` over `bg` by `t` — the derived-token workhorse. A `flat`
+/// theme's `Color::Reset` background passes straight through, so elevated
+/// surfaces degrade to the terminal's own rather than inventing a fill.
+fn raise(bg: Color, fg: Color, t: f32) -> Color {
+    if bg == Color::Reset {
+        Color::Reset
+    } else {
+        blend(bg, fg, t)
+    }
 }
 
 /// Linear blend between two colours, `t` in `0.0..=1.0`.
@@ -655,5 +753,87 @@ mod tests {
     fn blend_snaps_to_an_endpoint_for_ansi_colors() {
         assert_eq!(blend(Color::Red, Color::Blue, 0.2), Color::Red);
         assert_eq!(blend(Color::Red, Color::Blue, 0.8), Color::Blue);
+    }
+
+    #[test]
+    fn derived_surfaces_stay_inside_the_palette() {
+        for theme in THEMES {
+            if theme.flat() {
+                assert_eq!(theme.surface(), Color::Reset, "{}", theme.id);
+                assert_eq!(theme.surface_hi(), Color::Reset, "{}", theme.id);
+                assert_eq!(theme.track(), Color::Reset, "{}", theme.id);
+            } else {
+                // Elevation is strictly ordered: surface < surface_hi < track.
+                assert_ne!(theme.surface(), theme.bg, "{}", theme.id);
+                assert_ne!(theme.surface_hi(), theme.surface(), "{}", theme.id);
+                assert_ne!(theme.track(), theme.surface_hi(), "{}", theme.id);
+            }
+        }
+    }
+
+    #[test]
+    fn fade_walks_a_colour_toward_the_background() {
+        let theme = FALLBACK;
+        assert_eq!(theme.fade(theme.accent, 0.0), theme.accent);
+        assert_eq!(theme.fade(theme.accent, 1.0), theme.bg);
+        let midway = theme.fade(theme.accent, 0.5);
+        assert_ne!(midway, theme.accent);
+        assert_ne!(midway, theme.bg);
+    }
+
+    #[test]
+    fn on_color_picks_dark_text_for_light_pills_and_light_for_dark() {
+        let theme = FALLBACK;
+        // The accent is a light orange: text on it must be the dark bg.
+        assert_eq!(theme.on_color(theme.accent), theme.bg);
+        // A near-black chip takes the theme's foreground.
+        assert_eq!(theme.on_color(Color::Rgb(10, 10, 10)), theme.fg);
+        // Non-RGB colours fall back to the shipped highlight pair.
+        assert_eq!(theme.on_color(Color::Red), theme.highlight_fg);
+    }
+
+    #[test]
+    fn on_color_never_invents_a_colour_outside_the_theme() {
+        for theme in THEMES {
+            for pill in [theme.accent, theme.success, theme.warning, theme.danger] {
+                let fg = theme.on_color(pill);
+                assert!(
+                    fg == theme.bg
+                        || fg == theme.fg
+                        || fg == theme.highlight_fg
+                        || fg == Color::Black
+                        || fg == Color::White,
+                    "{} put {fg:?} on {pill:?}",
+                    theme.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_background_whitelist_covers_what_widgets_paint() {
+        let theme = FALLBACK;
+        for expected in [
+            theme.bg,
+            theme.surface(),
+            theme.surface_hi(),
+            theme.track(),
+            theme.highlight_bg,
+            theme.accent,
+            theme.warning,
+            theme.danger,
+            theme.info,
+        ] {
+            assert!(theme.is_background(expected), "{expected:?} rejected");
+        }
+        assert!(!theme.is_background(Color::Reset));
+        assert!(!theme.is_background(Color::Rgb(1, 2, 3)));
+    }
+
+    #[test]
+    fn only_the_mono_theme_is_flat() {
+        for theme in THEMES {
+            assert_eq!(theme.flat(), theme.id == "mono", "{}", theme.id);
+        }
     }
 }

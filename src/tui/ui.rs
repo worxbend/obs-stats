@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Tabs};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::tui::app::App;
 use crate::tui::keys::Overlay;
@@ -139,29 +139,37 @@ fn render_scrollbar(frame: &mut Frame, app: &mut App) {
 
 fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme;
-    let titles: Vec<Line> = View::ALL
-        .iter()
-        .enumerate()
-        .map(|(index, view)| {
-            Line::from(vec![
-                Span::styled(format!("{} ", index + 1), Style::default().fg(theme.border)),
-                Span::raw(view.tab_label(app.show_icons)),
-            ])
-        })
-        .collect();
-
-    let divider = if app.unicode { "│" } else { "|" };
-    let tabs = Tabs::new(titles)
-        .select(app.view.index())
-        .style(Style::default().fg(theme.muted))
-        .highlight_style(
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        )
-        .divider(Span::styled(divider, Style::default().fg(theme.border)));
-
-    frame.render_widget(tabs, area);
+    // One leading space, then ` N label ` pills separated by single cells.
+    // `mouse::tab_at` walks this exact layout, so the two cannot drift.
+    let mut spans = vec![Span::raw(" ")];
+    for (index, view) in View::ALL.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        if *view == app.view {
+            // The active tab is a pill reversed onto the highlight colour,
+            // which every theme pairs with a readable foreground — for the
+            // shipped palettes highlight_bg *is* the accent, and the flat
+            // mono palette still gets a proper inversion.
+            spans.push(Span::styled(
+                format!(" {} {} ", index + 1, view.tab_label(app.show_icons)),
+                Style::default()
+                    .fg(theme.highlight_fg)
+                    .bg(theme.highlight_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!(" {} ", index + 1),
+                Style::default().fg(theme.border),
+            ));
+            spans.push(Span::styled(
+                format!("{} ", view.tab_label(app.show_icons)),
+                Style::default().fg(theme.muted),
+            ));
+        }
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 #[cfg(test)]
@@ -479,15 +487,15 @@ mod tests {
                     for y in 0..buffer.area.height {
                         for x in 0..buffer.area.width {
                             let bg = buffer[(x, y)].bg;
-                            // Three deliberate departures from the page
-                            // background: a selected row's highlight, and the
-                            // alert banner's bar, which is coloured by
-                            // severity on purpose.
+                            // Every painted background must be one of the
+                            // theme's declared surface or signal tokens —
+                            // the panels' surface fill, the overlays' raised
+                            // fill, selection highlights, badges and the
+                            // alert banner are all deliberate. Anything else
+                            // is the terminal's own background leaking
+                            // through where the theme should be.
                             assert!(
-                                bg == theme.bg
-                                    || bg == theme.highlight_bg
-                                    || bg == theme.danger
-                                    || bg == theme.warning,
+                                theme.is_background(bg),
                                 "{}/{overlay:?}/{pending:?} leaves cell ({x},{y}) on {bg:?} — \
                                  the terminal's own background shows through wherever this is \
                                  not the theme's",

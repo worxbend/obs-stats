@@ -1,8 +1,13 @@
-//! Shared panel furniture: borders, glyph sets, bars and label/value rows.
+//! Shared panel furniture: borders, glyph sets, bars, badges and label/value
+//! rows — the design system's component layer.
 //!
 //! Everything here takes an explicit `unicode` flag rather than reading it
 //! from app state, so the fallback path (`u` at runtime, or `ui.unicode:
 //! false` for a Linux VT) is exercised by the same code as the pretty path.
+//!
+//! Colour decisions go through the theme's derived tokens (`surface`,
+//! `track`, `fade`, `gradient`, `on_color`), never a literal `Color`, so a
+//! new palette restyles every component at once.
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
@@ -62,6 +67,23 @@ pub fn glyphs(unicode: bool) -> Glyphs {
     }
 }
 
+/// Sub-cell fill steps, eighths of a cell in ascending order.
+///
+/// These are Block Elements, so they belong to the Unicode path only; the
+/// ASCII fallback fills whole cells, as it always has.
+const PARTIALS: [&str; 7] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+
+/// The colour of a bar's empty cells: the raised `track` token on a painted
+/// theme, the plain border colour on a flat one (whose `track` is
+/// `Color::Reset` and would render as the terminal's default foreground).
+pub fn track_color(theme: &Theme) -> Color {
+    if theme.flat() {
+        theme.border
+    } else {
+        theme.track()
+    }
+}
+
 /// Border drawn in ASCII mode.
 ///
 /// `BorderType::Plain` is *not* plain ASCII — it is U+2500 box drawing, the
@@ -78,7 +100,7 @@ const ASCII_BORDER: border::Set = border::Set {
     horizontal_bottom: "-",
 };
 
-/// A bordered panel.
+/// A bordered panel, filled with the theme's `surface` elevation.
 ///
 /// The focused panel gets a thick border in the accent colour; everything
 /// else gets a plain one, so focus is legible without colour alone.
@@ -100,6 +122,10 @@ pub fn panel<'a>(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
+        // The surface tint is what makes a panel read as a card sitting on
+        // the page rather than as a rectangle drawn around text. On a flat
+        // theme this is `Color::Reset` and costs nothing.
+        .style(Style::default().bg(theme.surface()))
         .title(Span::styled(format!(" {} ", title.into()), title_style))
         .padding(Padding::horizontal(1));
 
@@ -133,6 +159,21 @@ pub fn panel_with_note<'a>(
     )
 }
 
+/// A panel whose top-right note is a coloured badge — for states like
+/// `LIVE`, `idle` or `paused` that deserve more than dimmed text.
+pub fn panel_with_badge<'a>(
+    title: impl Into<String>,
+    note: &str,
+    note_color: Color,
+    focused: bool,
+    theme: &Theme,
+    unicode: bool,
+) -> Block<'a> {
+    let mut spans = badge(note, note_color, theme);
+    spans.push(Span::raw(" "));
+    panel(title, focused, theme, unicode).title_top(Line::from(spans).alignment(Alignment::Right))
+}
+
 /// Draw a panel's frame and return the area left inside it.
 ///
 /// Every panel does the same two steps in the same order: work out the inner
@@ -152,19 +193,25 @@ pub fn frame_panel(frame: &mut Frame, area: Rect, block: Block<'_>) -> Rect {
 /// Draw an overlay's frame over whatever was beneath it, returning the area
 /// left inside.
 ///
-/// The `.style(bg(theme.bg))` here is load-bearing and easy to drop.
-/// `Clear` does not paint the theme's background — it resets the cells it
-/// covers, which on a terminal with a transparent or image background means
-/// the user's own wallpaper shows through the middle of the overlay. The
-/// restyle is what puts the background back.
+/// The `.style(bg(theme.surface_hi()))` here is load-bearing and easy to
+/// drop. `Clear` does not paint the theme's background — it resets the cells
+/// it covers, which on a terminal with a transparent or image background
+/// means the user's own wallpaper shows through the middle of the overlay.
+/// The restyle is what puts a background back, one elevation step above the
+/// panels so the modal reads as floating.
 ///
 /// `no_widget_punches_a_hole_in_the_themed_background` is the test that
 /// catches forgetting it, and it sweeps every overlay for exactly this
 /// reason.
 pub fn popup(frame: &mut Frame, region: Rect, block: Block<'_>, theme: &Theme) -> Rect {
     frame.render_widget(Clear, region);
-    frame_panel(frame, region, block.style(Style::default().bg(theme.bg)))
+    frame_panel(
+        frame,
+        region,
+        block.style(Style::default().bg(theme.surface_hi())),
+    )
 }
+
 /// A horizontal bar of `width` cells filled to `ratio`, coloured by `color`.
 ///
 /// The fill rounds down, so a non-zero ratio always shows at least one cell
@@ -195,10 +242,22 @@ pub fn bar(
     if filled < width {
         spans.push(Span::styled(
             glyphs.bar_empty.repeat(width - filled),
-            Style::default().fg(theme.border),
+            Style::default().fg(track_color(theme)),
         ));
     }
     spans
+}
+
+/// The success → warning → danger colour at `position` along a scale.
+///
+/// Shared by the gradient bar and the sub-cell meter so both tell the same
+/// colour story: how bad things are, readable from the bar alone.
+fn gradient_color(position: f32, theme: &Theme) -> Color {
+    if position <= 0.5 {
+        theme::blend(theme.success, theme.warning, position * 2.0)
+    } else {
+        theme::blend(theme.warning, theme.danger, (position - 0.5) * 2.0)
+    }
 }
 
 /// A bar whose colour runs along a gradient as it fills — the btop look.
@@ -223,17 +282,67 @@ pub fn gradient_bar(ratio: f64, width: usize, theme: &Theme, unicode: bool) -> V
         } else {
             cell as f32 / (width - 1) as f32
         };
-        let color = if position <= 0.5 {
-            theme::blend(theme.success, theme.warning, position * 2.0)
-        } else {
-            theme::blend(theme.warning, theme.danger, (position - 0.5) * 2.0)
-        };
-        spans.push(Span::styled(glyphs.bar_full, Style::default().fg(color)));
+        spans.push(Span::styled(
+            glyphs.bar_full,
+            Style::default().fg(gradient_color(position, theme)),
+        ));
     }
     if filled < width {
         spans.push(Span::styled(
             glyphs.bar_empty.repeat(width - filled),
-            Style::default().fg(theme.border),
+            Style::default().fg(track_color(theme)),
+        ));
+    }
+    spans
+}
+
+/// A sub-cell precision meter: the gradient bar with eighth-block partial
+/// fills, so a 62.5% reading lights six cells and a half instead of six.
+///
+/// This is the polished face of [`gradient_bar`]; in ASCII mode it *is* the
+/// gradient bar, which has no partial cells to draw with.
+pub fn meter(ratio: f64, width: usize, theme: &Theme, unicode: bool) -> Vec<Span<'static>> {
+    if !unicode || width == 0 {
+        return gradient_bar(ratio, width, theme, unicode);
+    }
+    let glyphs = glyphs(unicode);
+    let ratio = if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    let eighths = (ratio * (width * 8) as f64).round() as usize;
+    let full = (eighths / 8).min(width);
+    let rem = eighths % 8;
+    let partial = rem > 0 && full < width;
+
+    let position = |cell: usize| {
+        if width <= 1 {
+            0.0
+        } else {
+            cell as f32 / (width - 1) as f32
+        }
+    };
+
+    let mut spans = Vec::with_capacity(width + 1);
+    for cell in 0..full {
+        spans.push(Span::styled(
+            glyphs.bar_full,
+            Style::default().fg(gradient_color(position(cell), theme)),
+        ));
+    }
+    if partial {
+        spans.push(Span::styled(
+            PARTIALS[rem - 1],
+            Style::default().fg(gradient_color(position(full), theme)),
+        ));
+    }
+    let used = full + usize::from(partial);
+    if used < width {
+        spans.push(Span::styled(
+            glyphs.bar_empty.repeat(width - used),
+            Style::default().fg(track_color(theme)),
         ));
     }
     spans
@@ -258,6 +367,9 @@ pub fn row(
 
 /// A `label  [bar]  value` row — the workhorse of the overview deck.
 ///
+/// The bar is the sub-cell gradient meter; `color` drives the value's text,
+/// which is where the caller's severity judgement lives.
+///
 /// Every parameter is a distinct visual decision the caller has already made;
 /// bundling them into a struct would only move the same list one line up.
 #[allow(clippy::too_many_arguments)]
@@ -275,7 +387,7 @@ pub fn gauge_row(
         format!("{label:<label_width$}"),
         Style::default().fg(theme.muted),
     )];
-    spans.extend(bar(ratio, bar_width, color, theme, unicode));
+    spans.extend(meter(ratio, bar_width, theme, unicode));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
         value.into(),
@@ -284,18 +396,107 @@ pub fn gauge_row(
     Line::from(spans)
 }
 
+/// A reversed pill: ` text ` on a coloured background, with the foreground
+/// picked for contrast by the theme. Badges are how the UI says *state* —
+/// `LIVE`, `REC`, `PAUSED` — at a glance.
+///
+/// A flat theme paints no backgrounds, so the pill degrades to bracketed
+/// coloured text rather than reversing a block onto the user's terminal.
+pub fn badge(text: &str, color: Color, theme: &Theme) -> Vec<Span<'static>> {
+    if theme.flat() {
+        return vec![Span::styled(
+            format!("[{text}]"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )];
+    }
+    vec![Span::styled(
+        format!(" {text} "),
+        Style::default()
+            .fg(theme.on_color(color))
+            .bg(color)
+            .add_modifier(Modifier::BOLD),
+    )]
+}
+
+/// A keyboard-key chip, as shown in the status bar's hints: ` space ` on a
+/// raised surface, like a keycap.
+pub fn kbd(key: &str, theme: &Theme) -> Vec<Span<'static>> {
+    vec![Span::styled(
+        format!(" {key} "),
+        Style::default()
+            .fg(theme.accent)
+            .bg(theme.surface_hi())
+            .add_modifier(Modifier::BOLD),
+    )]
+}
+
 /// A pill-shaped status chip, e.g. `● LIVE`.
-pub fn chip(text: &str, color: Color, active: bool, unicode: bool) -> Vec<Span<'static>> {
+///
+/// Active chips are full badges; inactive ones dim toward the background, so
+/// a blinking caller (the header's LIVE pulse) alternates between loud and
+/// quiet rather than between bold and regular.
+pub fn chip(
+    text: &str,
+    color: Color,
+    active: bool,
+    theme: &Theme,
+    unicode: bool,
+) -> Vec<Span<'static>> {
     let glyphs = glyphs(unicode);
-    let style = if active {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    if active {
+        badge(&format!("{} {text}", glyphs.dot), color, theme)
     } else {
-        Style::default().fg(color)
-    };
-    vec![
-        Span::styled(format!("{} ", glyphs.dot), style),
-        Span::styled(text.to_string(), style),
-    ]
+        let dim = theme.fade(color, 0.45);
+        vec![
+            Span::styled(format!("{} ", glyphs.dot), Style::default().fg(dim)),
+            Span::styled(text.to_string(), Style::default().fg(dim)),
+        ]
+    }
+}
+
+/// A labelled divider: `─ Title ─────────────────`, for separating groups
+/// inside a panel without buying another border. Falls back to the bare
+/// title when the row is too narrow to hold the rules.
+pub fn section(title: &str, width: usize, theme: &Theme, unicode: bool) -> Line<'static> {
+    let rule = if unicode { "─" } else { "-" };
+    let fixed = 2 + title.chars().count() + 1; // rule + space, title, space
+    if width <= fixed + 1 {
+        return Line::from(Span::styled(
+            title.to_string(),
+            Style::default()
+                .fg(theme.accent_alt)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(vec![
+        Span::styled(format!("{rule} "), Style::default().fg(theme.border)),
+        Span::styled(
+            title.to_string(),
+            Style::default()
+                .fg(theme.accent_alt)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {}", rule.repeat(width - fixed)),
+            Style::default().fg(theme.border),
+        ),
+    ])
+}
+
+/// A full-width rule flowing along the brand gradient — the header's
+/// underline, and the strongest single "this is a designed tool" signal on
+/// screen.
+pub fn gradient_rule(width: usize, theme: &Theme, unicode: bool) -> Vec<Span<'static>> {
+    let glyph = if unicode { "─" } else { "-" };
+    if width == 0 {
+        return Vec::new();
+    }
+    (0..width)
+        .map(|cell| {
+            let t = cell as f32 / (width - 1).max(1) as f32;
+            Span::styled(glyph, Style::default().fg(theme.gradient(t)))
+        })
+        .collect()
 }
 
 /// Centre `area`'s inner region to `width` × `height`, clamped to fit.
@@ -394,6 +595,7 @@ mod tests {
     fn a_zero_width_bar_produces_nothing() {
         assert!(bar(0.5, 0, Color::Red, theme(), true).is_empty());
         assert!(gradient_bar(0.5, 0, theme(), true).is_empty());
+        assert!(meter(0.5, 0, theme(), true).is_empty());
     }
 
     #[test]
@@ -421,6 +623,52 @@ mod tests {
     }
 
     #[test]
+    fn empty_cells_sit_on_the_track_token() {
+        let spans = bar(0.0, 8, Color::Red, theme(), true);
+        assert_eq!(spans[0].style.fg, Some(theme().track()));
+    }
+
+    #[test]
+    fn a_meter_matches_the_gradient_bar_in_ascii_mode() {
+        let metered = meter(0.5, 12, theme(), false);
+        let graded = gradient_bar(0.5, 12, theme(), false);
+        assert_eq!(width(&metered), width(&graded));
+        let meter_text: String = metered.iter().map(|s| s.content.as_ref()).collect();
+        let graded_text: String = graded.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(meter_text, graded_text);
+    }
+
+    #[test]
+    fn a_meter_always_occupies_its_full_width() {
+        for ratio in [0.0, 0.01, 0.13, 0.5, 0.94, 1.0] {
+            let spans = meter(ratio, 16, theme(), true);
+            assert_eq!(width(&spans), 16, "ratio {ratio} produced the wrong width");
+        }
+    }
+
+    #[test]
+    fn a_meter_fills_partial_cells_to_eighth_precision() {
+        // Half a cell beyond four full ones: 4.5 / 10 cells.
+        let spans = meter(0.45, 10, theme(), true);
+        assert!(
+            spans.iter().any(|span| span.content.as_ref() == "▌"),
+            "no half-block partial in {spans:?}"
+        );
+        // A hair above zero still shows something.
+        let hair = meter(0.01, 10, theme(), true);
+        assert!(
+            hair.iter().any(|span| span.content.as_ref() == "▏"),
+            "a tiny ratio deserves a sliver: {hair:?}"
+        );
+    }
+
+    #[test]
+    fn a_meter_of_one_cell_does_not_divide_by_zero() {
+        let spans = meter(1.0, 1, theme(), true);
+        assert_eq!(width(&spans), 1);
+    }
+
+    #[test]
     fn label_columns_are_padded_to_a_fixed_width() {
         let line = row("CPU", "12%", Color::Green, 10, theme());
         assert_eq!(line.spans[0].content, "CPU       ");
@@ -444,13 +692,73 @@ mod tests {
     }
 
     #[test]
-    fn chips_are_bolder_when_active() {
-        let active = chip("LIVE", Color::Red, true, true);
-        let idle = chip("LIVE", Color::Red, false, true);
-        assert!(active[1].style.add_modifier.contains(Modifier::BOLD));
-        assert!(!idle[1].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(active[0].content, "● ");
-        assert_eq!(chip("LIVE", Color::Red, true, false)[0].content, "* ");
+    fn badges_reverse_onto_their_colour_with_a_contrasting_foreground() {
+        let spans = badge("LIVE", theme().danger, theme());
+        assert_eq!(spans[0].content, " LIVE ");
+        assert_eq!(spans[0].style.bg, Some(theme().danger));
+        assert_eq!(spans[0].style.fg, Some(theme().on_color(theme().danger)));
+        assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn badges_on_a_flat_theme_use_brackets_instead_of_a_fill() {
+        let mono = theme::find("mono").unwrap();
+        let spans = badge("LIVE", mono.danger, mono);
+        assert_eq!(spans[0].content, "[LIVE]");
+        assert_eq!(spans[0].style.bg, None);
+        assert_eq!(spans[0].style.fg, Some(mono.danger));
+    }
+
+    #[test]
+    fn key_chips_sit_on_a_raised_surface() {
+        let spans = kbd("space", theme());
+        assert_eq!(spans[0].content, " space ");
+        assert_eq!(spans[0].style.bg, Some(theme().surface_hi()));
+        assert_eq!(spans[0].style.fg, Some(theme().accent));
+    }
+
+    #[test]
+    fn chips_are_badges_when_active_and_dimmed_text_when_not() {
+        let active = chip("LIVE", Color::Red, true, theme(), true);
+        assert_eq!(active[0].content, " ● LIVE ");
+        assert_eq!(active[0].style.bg, Some(Color::Red));
+
+        let idle = chip("LIVE", Color::Red, false, theme(), true);
+        assert_eq!(idle[0].content, "● ");
+        assert_eq!(idle[0].style.bg, None);
+
+        assert_eq!(
+            chip("LIVE", Color::Red, false, theme(), false)[0].content,
+            "* "
+        );
+    }
+
+    #[test]
+    fn sections_span_their_width_and_degrade_to_a_bare_title() {
+        let line = section("Keys", 30, theme(), true);
+        assert_eq!(line.width(), 30);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.starts_with("─ Keys "));
+
+        let narrow = section("Keys", 6, theme(), true);
+        assert_eq!(narrow.spans[0].content, "Keys");
+
+        let ascii = section("Keys", 30, theme(), false);
+        assert!(ascii.spans.iter().all(|s| s.content.is_ascii()));
+    }
+
+    #[test]
+    fn gradient_rules_flow_from_accent_to_accent_alt() {
+        let spans = gradient_rule(11, theme(), true);
+        assert_eq!(spans.len(), 11);
+        assert_eq!(spans[0].style.fg, Some(theme().accent));
+        assert_eq!(spans[10].style.fg, Some(theme().accent_alt));
+        assert!(gradient_rule(0, theme(), true).is_empty());
+        assert!(
+            gradient_rule(5, theme(), false)
+                .iter()
+                .all(|s| s.content == "-")
+        );
     }
 
     #[test]
@@ -513,6 +821,16 @@ mod tests {
             format!("{focused:?}"),
             format!("{unfocused:?}"),
             "focus must change the panel's appearance"
+        );
+    }
+
+    #[test]
+    fn panels_are_filled_with_the_surface_token() {
+        let block = panel("Test", false, theme(), true);
+        let debug = format!("{block:?}");
+        assert!(
+            debug.contains(&format!("{:?}", theme().surface())),
+            "panel does not paint the surface: {debug}"
         );
     }
 

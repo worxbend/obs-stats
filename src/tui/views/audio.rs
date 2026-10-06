@@ -61,6 +61,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             app.selection(View::Audio),
             &mut state,
             theme,
+            app.unicode,
         );
     }
     app.put_list_state(View::Audio, inner, state);

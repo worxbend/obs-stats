@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Rect {
 pub fn body(theme: &Theme, show_icons: bool, unicode: bool) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
-    lines.push(heading("Views", theme));
+    lines.push(heading("Views", theme, unicode));
     for view in View::ALL {
         let key = format!("{}", view.index() + 1);
         let title = if show_icons {
@@ -63,7 +63,7 @@ pub fn body(theme: &Theme, show_icons: bool, unicode: bool) -> Vec<Line<'static>
 
     for section in SECTIONS {
         lines.push(Line::from(""));
-        lines.push(heading(section, theme));
+        lines.push(heading(section, theme, unicode));
         for binding in BINDINGS.iter().filter(|b| b.section == *section) {
             lines.push(Line::from(vec![
                 Span::styled(
@@ -87,13 +87,10 @@ pub fn body(theme: &Theme, show_icons: bool, unicode: bool) -> Vec<Line<'static>
     lines
 }
 
-fn heading(text: &str, theme: &Theme) -> Line<'static> {
-    Line::from(Span::styled(
-        text.to_string(),
-        Style::default()
-            .fg(theme.accent_alt)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-    ))
+fn heading(text: &str, theme: &Theme, unicode: bool) -> Line<'static> {
+    // A labelled rule, so sections read as structure rather than as more
+    // text. The overlay is 66 wide less its border and padding.
+    chrome::section(text, 60, theme, unicode)
 }
 
 #[cfg(test)]

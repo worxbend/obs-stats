@@ -77,11 +77,40 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let detail_regions = Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(details);
 
-    let stream_block = chrome::panel("Stream output", false, theme, app.unicode);
+    let stream_block = if snapshot.stream.active {
+        let (note, color) = if snapshot.stream.reconnecting {
+            ("reconnecting", theme.warning)
+        } else {
+            ("LIVE", theme.danger)
+        };
+        chrome::panel_with_badge("Stream output", note, color, false, theme, app.unicode)
+    } else {
+        chrome::panel_with_note("Stream output", "idle", false, theme, app.unicode)
+    };
     let stream_inner = chrome::frame_panel(frame, detail_regions[0], stream_block);
     frame.render_widget(Paragraph::new(stream_detail(snapshot, theme)), stream_inner);
 
-    let record_block = chrome::panel("Recording output", false, theme, app.unicode);
+    let record_block = match (snapshot.record.active, snapshot.record.paused) {
+        (true, true) => chrome::panel_with_badge(
+            "Recording output",
+            "paused",
+            theme.warning,
+            false,
+            theme,
+            app.unicode,
+        ),
+        (true, false) => chrome::panel_with_badge(
+            "Recording output",
+            "REC",
+            theme.info,
+            false,
+            theme,
+            app.unicode,
+        ),
+        (false, _) => {
+            chrome::panel_with_note("Recording output", "idle", false, theme, app.unicode)
+        }
+    };
     let record_inner = chrome::frame_panel(frame, detail_regions[1], record_block);
     frame.render_widget(Paragraph::new(record_detail(snapshot, theme)), record_inner);
 }

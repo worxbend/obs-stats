@@ -49,17 +49,6 @@ pub fn line(alert: &Alert, theme: &Theme, unicode: bool, frame: u64, width: u16)
     // from five minutes ago. Warnings stay steady — a flashing amber bar for
     // a render hiccup would be worse than the hiccup.
     let emphasised = alert.severity() != Severity::Critical || frame % 20 < 14;
-    let base = if emphasised {
-        Style::default()
-            .bg(colour)
-            .fg(theme.highlight_fg)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .bg(theme.bg)
-            .fg(colour)
-            .add_modifier(Modifier::BOLD)
-    };
 
     let marker = match (alert.severity(), unicode) {
         (Severity::Critical, true) => "✖",
@@ -68,19 +57,29 @@ pub fn line(alert: &Alert, theme: &Theme, unicode: bool, frame: u64, width: u16)
         (Severity::Warning, false) => "!",
     };
 
-    let label = format!(" {marker} {} ", alert.kind.label());
+    let label = format!("{marker} {}", alert.kind.label());
+    // The badge supplies one cell of trailing padding; one more here keeps
+    // the gap between label and summary exactly what it has always been.
     let summary = format!(" {}", alert.summary());
     let hint = format!("  {} {}", chrome::glyphs(unicode).bullet, alert.kind.hint());
 
-    let mut spans = vec![
-        Span::styled(label.clone(), base),
-        Span::styled(
-            summary.clone(),
+    // The label is a severity badge — the loud block the eye finds first.
+    // The dim phase of the pulse drops the fill but keeps the text.
+    let mut spans = if emphasised {
+        chrome::badge(&label, colour, theme)
+    } else {
+        vec![Span::styled(
+            format!(" {label} "),
             Style::default().fg(colour).add_modifier(Modifier::BOLD),
-        ),
-    ];
+        )]
+    };
+    spans.push(Span::styled(
+        summary.clone(),
+        Style::default().fg(colour).add_modifier(Modifier::BOLD),
+    ));
 
-    let used = label.chars().count() + summary.chars().count();
+    // The badge adds a cell of padding on each side of its text.
+    let used = label.chars().count() + 2 + summary.chars().count();
     if used + hint.chars().count() <= width as usize {
         spans.push(Span::styled(hint, Style::default().fg(theme.muted)));
     }

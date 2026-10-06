@@ -2,10 +2,10 @@
 //!
 //! Five lists in this UI are navigable with a cursor: scenes, audio inputs,
 //! the log, the theme picker and the command palette. They differ only in
-//! what a row looks like. Everything after that — the highlight style, telling
-//! the widget where the cursor is, and rendering statefully so the scroll
-//! offset survives the frame — is the same in all five, and used to be
-//! written out five times.
+//! what a row looks like. Everything after that — the highlight style, the
+//! edge marker, telling the widget where the cursor is, and rendering
+//! statefully so the scroll offset survives the frame — is the same in all
+//! five, and used to be written out five times.
 //!
 //! Keeping it in one place is what makes "selected rows look the same
 //! everywhere" a property of the code rather than of five copies staying in
@@ -29,6 +29,11 @@ pub fn highlight_style(theme: &Theme) -> Style {
 
 /// Draw `rows` into `area` with `cursor` highlighted.
 ///
+/// The selected row gets an edge marker in the accent colour as well as the
+/// reversed fill, so the cursor survives themes whose highlight is quiet and
+/// terminals whose colour reproduction is poor. The marker is `▌` — a Block
+/// Element, so ASCII mode substitutes `>`.
+///
 /// Rendered statefully so `state` keeps the scroll offset: it is what the
 /// next frame scrolls from, and what a click is resolved against.
 pub fn render_rows(
@@ -38,9 +43,13 @@ pub fn render_rows(
     cursor: usize,
     state: &mut ListState,
     theme: &Theme,
+    unicode: bool,
 ) {
     let items: Vec<ListItem> = rows.into_iter().map(ListItem::new).collect();
-    let list = List::new(items).highlight_style(highlight_style(theme));
+    let marker = if unicode { "▌ " } else { "> " };
+    let list = List::new(items)
+        .highlight_style(highlight_style(theme))
+        .highlight_symbol(marker);
     state.select(Some(cursor));
     frame.render_stateful_widget(list, area, state);
 }

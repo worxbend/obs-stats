@@ -164,26 +164,27 @@ fn drag(app: &mut App, column: u16, row: u16) {
 
 /// Which tab occupies terminal column `column`.
 ///
-/// Mirrors the layout `Tabs` uses: one leading space, then each title, with a
-/// ` │ ` divider between them.
+/// Mirrors the layout `ui::render_tabs` draws: one leading space, then
+/// ` N label ` pills with a single-cell gap between them.
 fn tab_at(app: &App, column: u16) -> Option<View> {
     let mut cursor: u16 = 1;
     for view in View::ALL {
-        let label_width = tab_label_width(view, app.show_icons);
-        if column >= cursor && column < cursor + label_width {
+        let width = tab_width(view, app.show_icons);
+        if column >= cursor && column < cursor + width {
             return Some(view);
         }
-        cursor += label_width + 3; // ` │ `
+        cursor += width + 1; // the gap between pills
     }
     None
 }
 
-/// Display width of one tab, derived from the label the renderer draws.
-fn tab_label_width(view: View, show_icons: bool) -> u16 {
-    // The `"N "` number prefix, then whatever `View::tab_label` produced.
-    // Every icon is a single-width glyph — an invariant the glyph tests
-    // enforce — so counting `char`s is counting columns.
-    2 + view.tab_label(show_icons).chars().count() as u16
+/// Display width of one tab pill: the number, the label, and a cell of
+/// padding on each side — ` N label `.
+///
+/// Every icon is a single-width glyph — an invariant the glyph tests
+/// enforce — so counting `char`s is counting columns.
+fn tab_width(view: View, show_icons: bool) -> u16 {
+    4 + view.tab_label(show_icons).chars().count() as u16
 }
 
 #[cfg(test)]
@@ -535,10 +536,10 @@ mod tests {
 
     #[test]
     fn hiding_icons_narrows_every_tab() {
-        let with = tab_label_width(View::Overview, true);
-        let without = tab_label_width(View::Overview, false);
+        let with = tab_width(View::Overview, true);
+        let without = tab_width(View::Overview, false);
         assert!(without < with);
-        assert_eq!(without, 2 + View::Overview.title().len() as u16);
+        assert_eq!(without, 4 + View::Overview.title().len() as u16);
     }
 
     /// Render a real frame and return the tab-strip row as `(text, x-offset)`.

@@ -65,7 +65,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             })
             .collect();
 
-        list::render_rows(frame, inner, items, selected, &mut state, theme);
+        list::render_rows(
+            frame,
+            inner,
+            items,
+            selected,
+            &mut state,
+            theme,
+            app.unicode,
+        );
     }
 
     app.put_list_state(View::Scenes, inner, state);
@@ -118,10 +126,8 @@ pub fn scene_line(
     ];
 
     if let Some((text, color)) = tag {
-        spans.push(Span::styled(
-            format!("  {text}"),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::raw(" "));
+        spans.extend(chrome::badge(text, color, theme));
     }
 
     Line::from(spans)

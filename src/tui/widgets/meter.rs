@@ -47,7 +47,7 @@ pub fn bar(
         } else {
             spans.push(Span::styled(
                 glyphs.meter_empty.to_string(),
-                Style::default().fg(theme.border),
+                Style::default().fg(chrome::track_color(theme)),
             ));
         }
     }

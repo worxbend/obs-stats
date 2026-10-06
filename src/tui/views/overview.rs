@@ -238,7 +238,7 @@ fn health_card(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mut lines = vec![verdict(health.label(), color), Line::from("")];
+    let mut lines = vec![verdict(health.label(), color, theme), Line::from("")];
     lines.extend(health_rows(snapshot, theme));
 
     let text_rows = (lines.len() as u16).min(inner.height);
@@ -307,31 +307,28 @@ fn render_outputs(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme;
     let snapshot = &app.snapshot;
 
-    let stream_block = chrome::panel_with_note(
-        "Stream",
-        if snapshot.stream.active {
-            "LIVE"
-        } else {
-            "idle"
-        },
-        false,
-        theme,
-        app.unicode,
-    );
+    let stream_block = if snapshot.stream.active {
+        chrome::panel_with_badge("Stream", "LIVE", theme.danger, false, theme, app.unicode)
+    } else {
+        chrome::panel_with_note("Stream", "idle", false, theme, app.unicode)
+    };
     let stream_inner = chrome::frame_panel(frame, regions[0], stream_block);
     frame.render_widget(Paragraph::new(stream_rows(snapshot, theme)), stream_inner);
 
-    let record_block = chrome::panel_with_note(
-        "Recording",
-        match (snapshot.record.active, snapshot.record.paused) {
-            (true, true) => "paused",
-            (true, false) => "REC",
-            (false, _) => "idle",
-        },
-        false,
-        theme,
-        app.unicode,
-    );
+    let record_block = match (snapshot.record.active, snapshot.record.paused) {
+        (true, true) => chrome::panel_with_badge(
+            "Recording",
+            "paused",
+            theme.warning,
+            false,
+            theme,
+            app.unicode,
+        ),
+        (true, false) => {
+            chrome::panel_with_badge("Recording", "REC", theme.info, false, theme, app.unicode)
+        }
+        (false, _) => chrome::panel_with_note("Recording", "idle", false, theme, app.unicode),
+    };
     let record_inner = chrome::frame_panel(frame, regions[1], record_block);
     frame.render_widget(Paragraph::new(record_rows(snapshot, theme)), record_inner);
 }

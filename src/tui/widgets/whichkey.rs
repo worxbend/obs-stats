@@ -7,7 +7,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -116,23 +116,20 @@ fn cell(entry: &'static Entry, arrow: &str, theme: &Theme) -> Vec<Span<'static>>
         theme.fg
     };
 
-    vec![
-        Span::styled(
-            format!(" {} ", entry.key()),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
+    let mut spans = chrome::kbd(&entry.key().to_string(), theme);
+    spans.push(Span::styled(
+        format!("{arrow} "),
+        Style::default().fg(theme.border),
+    ));
+    spans.push(Span::styled(
+        format!(
+            "{:<width$}",
+            crate::util::truncate(&label, label_width),
+            width = label_width
         ),
-        Span::styled(format!("{arrow} "), Style::default().fg(theme.border)),
-        Span::styled(
-            format!(
-                "{:<width$}",
-                crate::util::truncate(&label, label_width),
-                width = label_width
-            ),
-            Style::default().fg(color),
-        ),
-    ]
+        Style::default().fg(color),
+    ));
+    spans
 }
 
 #[cfg(test)]

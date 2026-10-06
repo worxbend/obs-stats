@@ -50,7 +50,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
         .map(|entry| row(entry, app.theme, app.unicode))
         .collect();
 
-    list::render_rows(frame, list_area, items, app.theme_cursor, state, app.theme);
+    list::render_rows(
+        frame,
+        list_area,
+        items,
+        app.theme_cursor,
+        state,
+        app.theme,
+        app.unicode,
+    );
 
     if footer_height == 1 {
         let footer = Rect {

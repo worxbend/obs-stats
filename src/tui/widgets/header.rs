@@ -32,11 +32,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         app.regions.hits.push((rect, Hit::Alerts));
     }
 
-    let divider = if app.unicode { "─" } else { "-" };
+    // The brand rule: a full-width underline flowing along the theme's
+    // accent gradient. It is the one piece of pure ornament on screen, and
+    // it costs a single row of per-cell spans.
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            divider.repeat(rule.width as usize),
-            Style::default().fg(app.theme.border),
+        Paragraph::new(Line::from(chrome::gradient_rule(
+            rule.width as usize,
+            app.theme,
+            app.unicode,
         ))),
         rule,
     );
@@ -45,18 +48,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 /// `obs-stats v0.1.0 · OBS 30.2.3 (linux) · ws 5.5.0`
 fn identity(app: &App) -> Line<'static> {
     let theme = app.theme;
-    let mut spans = vec![
-        Span::styled(
-            APP_NAME.to_string(),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" v{}", app.version),
-            Style::default().fg(theme.muted),
-        ),
-    ];
+    // The app name is the brand mark: it runs along the accent gradient one
+    // character at a time. A flat theme's gradient snaps to its ANSI
+    // endpoints, which still reads as deliberate.
+    let mut spans: Vec<Span<'static>> = APP_NAME
+        .chars()
+        .enumerate()
+        .map(|(index, c)| {
+            let t = index as f32 / (APP_NAME.chars().count() - 1).max(1) as f32;
+            Span::styled(
+                c.to_string(),
+                Style::default()
+                    .fg(theme.gradient(t))
+                    .add_modifier(Modifier::BOLD),
+            )
+        })
+        .collect();
+    spans.push(Span::styled(
+        format!(" v{}", app.version),
+        Style::default().fg(theme.muted),
+    ));
 
     let version = &app.snapshot.version;
     if !version.obs_version.is_empty() {
@@ -133,6 +144,7 @@ fn status(app: &App) -> (Line<'static>, Option<usize>) {
             // Blink the badge roughly twice a second so it reads as live even
             // in a screenshot-still terminal.
             app.frame % 20 < 14,
+            theme,
             app.unicode,
         ));
         spans.push(Span::styled(
@@ -155,6 +167,7 @@ fn status(app: &App) -> (Line<'static>, Option<usize>) {
                 theme.info
             },
             !snapshot.record.paused,
+            theme,
             app.unicode,
         ));
         spans.push(Span::styled(
@@ -203,7 +216,7 @@ fn connection_chip(
         ConnectionState::Disconnected { .. } => theme.danger,
         ConnectionState::Fatal { .. } => theme.danger,
     };
-    let mut spans = chrome::chip(&state.label(), color, true, unicode);
+    let mut spans = chrome::chip(&state.label(), color, true, theme, unicode);
 
     // Once connected, the poll counter is the honest "data is flowing" signal
     // — a green chip alone would survive a silent, wedged socket.

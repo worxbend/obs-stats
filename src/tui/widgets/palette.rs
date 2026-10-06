@@ -25,9 +25,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
     // +2 border, +2 for the query row and its rule.
     let height = (VISIBLE_ROWS + 4).min(area.height);
     let region = chrome::centered(area, 64.min(area.width), height);
-    let block = chrome::panel_with_note(
+    let block = chrome::panel_with_badge(
         app.palette.title(),
-        format!("{}", app.palette.matches.len()),
+        &format!("{}", app.palette.matches.len()),
+        app.theme.accent,
         true,
         app.theme,
         app.unicode,
@@ -66,6 +67,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
         app.palette.cursor,
         state,
         app.theme,
+        app.unicode,
     );
 
     (region, list_area)

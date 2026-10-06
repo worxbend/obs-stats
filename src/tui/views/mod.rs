@@ -198,10 +198,11 @@ pub fn line_chart(
         // `self.style.bg.unwrap_or(Color::Reset)`. Leave the style unset and
         // that Reset punches a hole straight through the themed background,
         // exposing the terminal's own — visible as a mismatched rectangle
-        // (and any wallpaper or transparency behind it). The theme's own
-        // `Color::Reset`, as in the mono palette, still passes through here,
-        // which is what that theme wants.
-        .style(Style::default().bg(theme.bg))
+        // (and any wallpaper or transparency behind it). The chart sits in a
+        // panel, so its fill is the panel's `surface`, not the page's `bg`.
+        // The theme's own `Color::Reset`, as in the mono palette, still
+        // passes through here, which is what that theme wants.
+        .style(Style::default().bg(theme.surface()))
         .x_axis(
             Axis::default()
                 .style(Style::default().fg(theme.border))
@@ -283,13 +284,12 @@ fn ascii_plot(
         .collect()
 }
 
-/// A large centred verdict word, e.g. `HEALTHY`.
-pub fn verdict(text: &str, color: Color) -> Line<'static> {
-    Line::from(Span::styled(
-        text.to_string(),
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    ))
-    .centered()
+/// A large centred verdict badge, e.g. ` HEALTHY ` reversed onto its colour.
+///
+/// The verdict is the one-word answer the whole app exists to give, so it
+/// gets the loudest component in the system.
+pub fn verdict(text: &str, color: Color, theme: &Theme) -> Line<'static> {
+    Line::from(chrome::badge(text, color, theme)).centered()
 }
 
 /// Split a metric's value and unit so the unit can be dimmed.
@@ -422,9 +422,10 @@ mod tests {
 
     #[test]
     fn verdict_is_centred_and_coloured() {
-        let line = verdict("HEALTHY", Color::Green);
-        assert_eq!(line.spans[0].content, "HEALTHY");
-        assert_eq!(line.spans[0].style.fg, Some(Color::Green));
+        let theme = crate::tui::theme::FALLBACK;
+        let line = verdict("HEALTHY", theme.success, theme);
+        assert_eq!(line.spans[0].content, " HEALTHY ");
+        assert_eq!(line.spans[0].style.bg, Some(theme.success));
         assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
     }
 
