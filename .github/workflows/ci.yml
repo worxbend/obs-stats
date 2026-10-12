@@ -5,21 +5,56 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact commit to validate for a release
+        type: string
+        required: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Format and lint
+  workflows:
+    name: Workflow lint
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      # Install a fixed official source release; Go verifies module checksums
+      # through the public checksum database instead of executing a remote script.
+      - name: Install actionlint
+        env:
+          GOBIN: ${{ runner.temp }}/actionlint
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+      - name: Lint workflows
+        run: '"$RUNNER_TEMP/actionlint/actionlint" -color'
+
+  lint:
+    name: Format and lint
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -31,10 +66,11 @@ jobs:
         run: cargo fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -42,55 +78,143 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      # The whole suite runs without a terminal or a live OBS: the TUI is
-      # exercised through ratatui's TestBackend and the client through
-      # synthetic updates.
+      # This includes the raw-cell all-themes background regression, which SVG
+      # screenshots cannot detect because their writer resolves Color::Reset.
       - name: cargo test
-        run: cargo test --all-features --verbose
+        run: cargo test --locked --all-features --verbose
+
+      # Examples' unit tests are not included in ordinary cargo test.
+      - name: Screenshot example tests (fixtures, determinism and ASCII)
+        run: cargo test --locked --all-features --example screenshot --verbose
 
       - name: cargo build --release
-        run: cargo build --release
+        run: cargo build --locked --release
+
+      - name: Build PTY smoke-test binary
+        if: runner.os == 'Linux'
+        run: cargo build --locked
+
+      - name: Terminal smoke-harness regressions
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s tests -p 'test_pty_smoke.py' -v
+
+      - name: Terminal lifecycle and CLI smoke tests
+        if: runner.os == 'Linux'
+        run: python3 scripts/pty_smoke.py --binary target/debug/obs-stats
 
   docs:
-    name: Screenshots reproduce
+    name: Screenshots and deterministic previews
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      # The images in docs/ are generated from the UI itself. Regenerating
-      # them must be a no-op, or the screenshots have drifted from the code.
+      # Tracked SVGs must reproduce exactly, including detecting new files.
       - name: Regenerate screenshots
-        run: cargo run --example screenshot -- --demo
+        run: cargo run --locked --example screenshot -- --demo
 
       - name: Check for drift
         run: |
-          if ! git diff --quiet -- docs/images; then
+          if [ -n "$(git status --porcelain --untracked-files=all -- docs/images)" ]; then
             echo "::error::docs/images is out of date."
-            echo "Run: cargo run --example screenshot -- --demo"
+            echo "Run: cargo run --locked --example screenshot -- --demo"
             git diff --stat -- docs/images
+            git status --short -- docs/images
             exit 1
           fi
 
+      - name: Reproduce the full preview matrix in Unicode and ASCII
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import itertools
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import xml.etree.ElementTree as ET
+
+          scenarios = ('healthy', 'strained', 'drops', 'loading', 'offline',
+                       'retrying', 'paused', 'recording-paused', 'stale')
+          sizes = ('60x18', '80x24', '100x30', '132x38', '180x50')
+          shots = {
+              'overview': 'grafana', 'performance': 'grafana',
+              'stream': 'tokyo-night', 'scenes': 'nord', 'audio': 'gruvbox',
+              'log': 'catppuccin-mocha', 'themes': 'dracula', 'help': 'grafana',
+              'alert': 'grafana', 'whichkey': 'grafana',
+              'palette': 'tokyo-night', 'command': 'nord',
+          }
+          def forbidden(char):
+              code = ord(char)
+              return (0x2190 <= code <= 0x21FF or 0x2500 <= code <= 0x25FF
+                      or 0x2800 <= code <= 0x28FF or 0x1F000 <= code <= 0x1FFFF)
+
+          with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP']) as root:
+              for ascii_mode in (False, True):
+                  suffix = '-ascii' if ascii_mode else ''
+                  expected = {
+                      f'{shot}-{scenario}-{shots[shot]}-{size}{suffix}.svg'
+                      for scenario, size, shot in itertools.product(scenarios, sizes, shots)
+                  }
+                  renders = []
+                  for repeat in range(2):
+                      output = Path(root) / f'{ascii_mode}-{repeat}'
+                      command = ['target/debug/examples/screenshot', '--matrix',
+                                 '--output', str(output)]
+                      if ascii_mode:
+                          command.append('--ascii')
+                      subprocess.run(command, check=True, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.PIPE)
+                      files = {path.name: path.read_bytes() for path in output.iterdir()}
+                      assert files.keys() == expected, 'Incomplete preview matrix'
+                      renders.append(files)
+                  assert renders[0] == renders[1], 'Nondeterministic preview export'
+                  for name, svg in renders[0].items():
+                      tree = ET.fromstring(svg)
+                      assert 'synthetic fixture' in ''.join(tree.itertext()), name
+                      if ascii_mode:
+                          text = ''.join(''.join(node.itertext()) for node in
+                                         tree.findall('{http://www.w3.org/2000/svg}text'))
+                          assert not any(map(forbidden, text)), f'Unicode drawing in {name}'
+                  print(f'{len(expected)} previews reproduced twice; ascii={ascii_mode}')
+          PY
+
   msrv:
     name: Minimum supported Rust version
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
       - name: Read rust-version from Cargo.toml
         id: msrv
         run: |
-          version=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['rust-version']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'version={version}', file=output)
+          PY
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -99,4 +223,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: cargo check
-        run: cargo check --all-targets
+        run: cargo check --locked --all-targets --all-features

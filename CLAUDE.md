@@ -1,6 +1,6 @@
 # obs-stats — working notes
 
-A btop-style terminal dashboard for OBS Studio. Single Rust binary, no daemon.
+A terminal-native observability dashboard for OBS Studio. Single Rust binary, no daemon.
 
 ## Layout
 
@@ -72,7 +72,7 @@ row's mute marker are both covered by tests that assert this.
 
 ## Testing
 
-`cargo test` — 526 tests, no terminal and no live OBS required. The TUI is
+`cargo test --locked` — model and rendering tests need no terminal or live OBS. The TUI is
 exercised through ratatui's `TestBackend`; the client through synthetic
 `Update`s. Rendering tests cover every view × every theme, plus cramped
 terminals, so a layout that underflows is caught.
@@ -80,13 +80,20 @@ terminals, so a layout that underflows is caught.
 Before committing:
 
 ```sh
-cargo fmt --all
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo run --example screenshot -- --demo   # must produce no git diff
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+cargo test --locked --example screenshot
+cargo build --locked
+python3 scripts/pty_smoke.py --binary target/debug/obs-stats
+cargo run --locked --example screenshot -- --demo   # must produce no image drift
 ```
 
-CI fails if the screenshots drift from the code.
+CI fails if the screenshots drift from the code. Example-local preview tests
+must be run explicitly; ordinary `cargo test` does not execute them. Stale-age
+captures use `ui::draw_at` to freeze presentation time. The real-PTY smoke test
+checks navigation, resizing and terminal restoration without a live OBS.
+See CONTRIBUTING.md for the release gates.
 
 ## Screenshots
 

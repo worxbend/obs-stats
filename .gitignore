@@ -1,5 +1,9 @@
 /target
 /dist
+/docs/previews
+/_site
+__pycache__/
+*.pyc
 
 # Agent Loop runtime
 .agent-loop/

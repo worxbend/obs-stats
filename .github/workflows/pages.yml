@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # One deployment at a time; never cancel one mid-flight.
 concurrency:
@@ -23,6 +21,10 @@ jobs:
   build:
     name: Build site
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +39,55 @@ jobs:
           cp docs/images/*.svg _site/images/
           # Jekyll would otherwise try to process this and drop underscored files.
           touch _site/.nojekyll
-          ls -la _site _site/images
+
+      - name: Check local assets and anchors
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import unquote, urlsplit
+
+          class Links(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=True)
+                  self.ids = set()
+                  self.urls = []
+
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  if 'id' in attrs:
+                      assert attrs['id'] not in self.ids, f"Duplicate id: {attrs['id']}"
+                      self.ids.add(attrs['id'])
+                  for key in ('href', 'src'):
+                      if key in attrs:
+                          self.urls.append(attrs[key])
+                  if tag == 'img':
+                      assert attrs.get('alt'), 'Preview images need descriptive alt text'
+
+          root = Path('_site').resolve()
+          pages = {}
+          for path in sorted(root.rglob('*.html')):
+              parser = Links()
+              parser.feed(path.read_text())
+              pages[path] = parser
+          assert pages, 'No HTML pages assembled'
+          checked = 0
+          for page, parser in pages.items():
+              for url in parser.urls:
+                  parts = urlsplit(url)
+                  if parts.scheme or parts.netloc:
+                      continue
+                  assert not parts.path.startswith('/'), f'Pages subpath unsafe: {url}'
+                  target = (page.parent / unquote(parts.path)).resolve() if parts.path else page
+                  assert target.is_relative_to(root), f'Asset escapes site: {url}'
+                  if target.is_dir():
+                      target /= 'index.html'
+                  assert target.is_file(), f'Missing exact asset: {page.name}: {url}'
+                  if parts.fragment and target in pages:
+                      assert unquote(parts.fragment) in pages[target].ids, f'Broken anchor: {url}'
+                  checked += 1
+          print(f'Validated {checked} local asset/anchor references in {len(pages)} HTML page(s)')
+          PY
 
       - uses: actions/configure-pages@v5
 
@@ -49,6 +99,10 @@ jobs:
     name: Deploy
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

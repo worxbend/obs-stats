@@ -6,18 +6,93 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag to build (e.g. v0.1.0)
+        description: Existing version tag to build (e.g. v0.6.0)
+        type: string
         required: true
 
+# Only the final publishing job may mutate repository contents.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate release tag and version
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      # Never interpolate a dispatch input into executable shell/Python source.
+      - name: Validate tag syntax before checkout
+        id: tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          tag = os.environ['RELEASE_TAG']
+          number = r'(?:0|[1-9][0-9]*)'
+          semver = rf'v{number}\.{number}\.{number}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?'
+          if not re.fullmatch(semver, tag):
+              raise SystemExit('Release tag must be v<semver>, not a branch or shell expression')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'tag={tag}', file=output)
+          PY
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+          persist-credentials: false
+
+      - name: Require tag to match Cargo.toml
+        id: version
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import tomllib
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          tag = os.environ['RELEASE_TAG']
+          if tag != f'v{version}':
+              raise SystemExit(f'Tag {tag} does not match Cargo.toml version {version}')
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print(f'version={version}', file=output)
+              print(f'sha={sha}', file=output)
+              print(f'prerelease={str("-" in version.split("+")[0]).lower()}', file=output)
+          PY
+
+  quality:
+    name: Release quality gates
+    needs: validate
+    # Reuse every CI gate (three-host tests, screenshot example tests, PTY,
+    # format/clippy, MSRV, workflow lint, screenshot drift and preview matrix).
+    # All jobs check out the immutable commit resolved from the validated tag.
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.validate.outputs.sha }}
+    permissions:
+      contents: read
+
   build:
     name: ${{ matrix.target }}
+    timeout-minutes: 30
+    needs: [validate, quality]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -39,11 +114,17 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             extension: .exe
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      EXTENSION: ${{ matrix.extension }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.validate.outputs.sha }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -55,29 +136,58 @@ jobs:
 
       - name: Install cross-compilation packages
         if: matrix.packages
+        env:
+          PACKAGES: ${{ matrix.packages }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y ${{ matrix.packages }}
+          # Matrix values are fixed package names, not user-controlled inputs.
+          read -r -a packages <<< "$PACKAGES"
+          sudo apt-get install -y "${packages[@]}"
 
       - name: Configure linker
         if: matrix.linker
+        env:
+          LINKER: ${{ matrix.linker }}
         run: |
-          target_upper=$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
-          echo "CARGO_TARGET_${target_upper}_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
+          target_upper=$(printf '%s' "$TARGET" | tr 'a-z-' 'A-Z_')
+          echo "CARGO_TARGET_${target_upper}_LINKER=$LINKER" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Verify binary version on compatible native hosts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          host = next(line.removeprefix('host: ') for line in
+                      subprocess.check_output(['rustc', '-vV'], text=True).splitlines()
+                      if line.startswith('host: '))
+          target = os.environ['TARGET']
+          binary = Path('target') / target / 'release' / ('obs-stats' + os.environ['EXTENSION'])
+          if target == host or (host == 'x86_64-unknown-linux-gnu'
+                                and target == 'x86_64-unknown-linux-musl'):
+              actual = subprocess.check_output([str(binary), '--version'], text=True).strip()
+              expected = 'obs-stats ' + os.environ['RELEASE_VERSION']
+              if actual != expected:
+                  raise SystemExit(f'Binary version mismatch: {actual!r} != {expected!r}')
+              print(actual)
+          else:
+              print(f'Cross-compiled {target} on {host}; archive integrity checked before publish')
+          PY
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          name="obs-stats-${tag}-${{ matrix.target }}"
+          name="obs-stats-${RELEASE_TAG}-${TARGET}"
           mkdir -p "dist/${name}"
-          cp "target/${{ matrix.target }}/release/obs-stats" "dist/${name}/"
-          cp README.md LICENSE config.example.yml "dist/${name}/"
+          cp "target/${TARGET}/release/obs-stats" "dist/${name}/"
+          cp README.md LICENSE CHANGELOG.md config.example.yml "dist/${name}/"
           tar -czf "dist/${name}.tar.gz" -C dist "${name}"
           if command -v sha256sum >/dev/null; then
             (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
@@ -89,12 +199,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $tag = "${{ github.event.inputs.tag }}"
-          if (-not $tag) { $tag = "${{ github.ref_name }}" }
-          $name = "obs-stats-$tag-${{ matrix.target }}"
+          $name = "obs-stats-$env:RELEASE_TAG-$env:TARGET"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/obs-stats.exe" "dist/$name/"
-          Copy-Item README.md, LICENSE, config.example.yml "dist/$name/"
+          Copy-Item "target/$env:TARGET/release/obs-stats.exe" "dist/$name/"
+          Copy-Item README.md, LICENSE, CHANGELOG.md, config.example.yml "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  $name.zip" | Out-File -Encoding ascii "dist/$name.zip.sha256"
@@ -109,27 +217,93 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish release
-    needs: build
+    name: Verify artifacts and publish release
+    timeout-minutes: 10
+    needs: [validate, quality, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_SHA: ${{ needs.validate.outputs.sha }}
     steps:
+      # The installer must come from the release tag, not the default branch.
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.validate.outputs.tag }}
+          persist-credentials: false
+
+      - name: Reject a tag moved since validation
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Collect checksums
+      - name: Verify six archives and collect checksums
         run: |
-          cd artifacts
-          cat *.sha256 | sort -k2 > SHA256SUMS
-          rm -f *.sha256
-          ls -la
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import tarfile
+          import zipfile
+
+          targets = (
+              'x86_64-unknown-linux-gnu', 'x86_64-unknown-linux-musl',
+              'aarch64-unknown-linux-gnu', 'x86_64-apple-darwin',
+              'aarch64-apple-darwin', 'x86_64-pc-windows-msvc',
+          )
+          root = Path('artifacts')
+          tag = os.environ['RELEASE_TAG']
+          expected = set()
+          sums = []
+          for target in targets:
+              name = f'obs-stats-{tag}-{target}'
+              windows = target.endswith('windows-msvc')
+              archive = name + ('.zip' if windows else '.tar.gz')
+              checksum = archive + '.sha256'
+              expected.update((archive, checksum))
+              binary = 'obs-stats.exe' if windows else 'obs-stats'
+              payload = {f'{name}/{file}' for file in
+                         (binary, 'README.md', 'LICENSE', 'CHANGELOG.md', 'config.example.yml')}
+              digest = hashlib.sha256((root / archive).read_bytes()).hexdigest()
+              entry = (root / checksum).read_text(encoding='ascii').strip()
+              if entry != f'{digest}  {archive}' or not re.fullmatch(r'[0-9a-f]{64}', digest):
+                  raise SystemExit(f'Invalid checksum: {archive}')
+              if windows:
+                  with zipfile.ZipFile(root / archive) as bundle:
+                      members = [item.filename for item in bundle.infolist() if not item.is_dir()]
+                      assert set(members) == payload and len(members) == len(payload), archive
+                      assert bundle.testzip() is None, archive
+                      assert all(bundle.getinfo(member).file_size > 0 for member in payload), archive
+              else:
+                  with tarfile.open(root / archive, 'r:gz') as bundle:
+                      entries = bundle.getmembers()
+                      members = [item.name for item in entries if item.isfile()]
+                      assert set(members) == payload and len(members) == len(payload), archive
+                      assert all(item.isfile() or (item.isdir() and item.name == name)
+                                 for item in entries), archive
+                      assert all(bundle.getmember(member).size > 0 for member in payload), archive
+                      assert bundle.getmember(f'{name}/{binary}').mode & 0o111, archive
+              sums.append(f'{digest}  {archive}\n')
+              print(f'Verified checksum and archive payload: {archive}')
+          actual = {file.name for file in root.iterdir()}
+          assert actual == expected, f'Unexpected or missing artifacts: {actual ^ expected}'
+          (root / 'SHA256SUMS').write_text(''.join(sorted(sums)), encoding='ascii')
+          for checksum in root.glob('*.sha256'):
+              checksum.unlink()
+          PY
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.validate.outputs.tag }}
+          target_commitish: ${{ needs.validate.outputs.sha }}
+          draft: false
+          prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
           files: |
             artifacts/*
             scripts/install.sh
