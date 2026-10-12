@@ -141,8 +141,8 @@ jobs:
         run: |
           sudo apt-get update
           # Matrix values are fixed package names, not user-controlled inputs.
-          read -r -a packages <<< "$PACKAGES"
-          sudo apt-get install -y "${packages[@]}"
+          read -r -a package_args <<< "$PACKAGES"
+          sudo apt-get install -y "${package_args[@]}"
 
       - name: Configure linker
         if: matrix.linker
