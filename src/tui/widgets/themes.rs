@@ -23,10 +23,10 @@ const VISIBLE_ROWS: u16 = 12;
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -> (Rect, Rect) {
     // +2 border, +2 for the footer hint and its spacer.
     let height = (VISIBLE_ROWS + 4).min(area.height);
-    let region = chrome::centered(area, 52.min(area.width), height);
+    let region = chrome::centered(area, 58.min(area.width), height);
     let block = chrome::panel_with_note(
         "Appearance",
-        format!("{}/{}", app.theme_cursor + 1, theme::THEMES.len()),
+        format!("PREVIEW {}/{}", app.theme_cursor + 1, theme::THEMES.len()),
         true,
         app.theme,
         app.unicode,
@@ -68,7 +68,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "Enter applies · Esc reverts",
+                if app.unicode {
+                    "Enter applies · Esc reverts"
+                } else {
+                    "Enter applies | Esc reverts"
+                },
                 Style::default().fg(app.theme.muted),
             ))),
             footer,
@@ -88,6 +92,7 @@ pub fn row(entry: &Theme, active: &Theme, unicode: bool) -> Line<'static> {
 
     for color in [
         entry.accent,
+        entry.accent_alt,
         entry.success,
         entry.warning,
         entry.danger,
@@ -124,7 +129,11 @@ mod tests {
         let line = row(entry, theme::FALLBACK, true);
         let rendered = line_text(&line);
         assert!(rendered.contains("Nord"));
-        assert_eq!(rendered.matches('█').count(), 5, "five swatches");
+        assert_eq!(
+            rendered.matches('█').count(),
+            6,
+            "brand, alternate and four semantic swatches"
+        );
     }
 
     #[test]

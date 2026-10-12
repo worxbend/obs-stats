@@ -19,7 +19,7 @@ use crate::tui::view::View;
 #[command(
     name = "obs-stats",
     version,
-    about = "A btop-style terminal dashboard for OBS Studio",
+    about = "A terminal-native observability dashboard for OBS Studio",
     long_about = "obs-stats connects to OBS Studio over obs-websocket 5.x and renders a live \
                   terminal dashboard: CPU and memory, frame pacing, stream and recording \
                   outputs, scenes, and audio meters.\n\n\

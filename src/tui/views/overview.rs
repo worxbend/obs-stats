@@ -1,21 +1,22 @@
-//! The Overview deck — the btop-style "is everything fine?" screen.
-//!
-//! Three cards across the top (system, video, health), the two output cards
-//! below them, and a bitrate strip at the bottom. On a narrow terminal the
-//! cards stack instead of shrinking into illegibility.
+//! The telemetry cockpit: headline metrics, retained-history analytics,
+//! resource cards and both outputs. Compact layouts fold headlines into two
+//! columns while preserving the numbers; acquisition never runs in a widget.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::Line;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::metrics::{Health, Snapshot};
+use crate::metrics::{ConnectionState, Health, Snapshot};
 use crate::obs::stats::{DISK_DANGER_MIB, DISK_WARN_MIB};
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
-use crate::tui::views;
 use crate::tui::views::loss::Loss;
-use crate::tui::views::{NARROW_WIDTH, axis_bitrate, bar_width, line_chart, sparkline, verdict};
+use crate::tui::views::{
+    NARROW_WIDTH, axis_bitrate, bar_width, heat_strip, history_summary, line_chart, metric_tile,
+    sparkline, verdict,
+};
 use crate::tui::widgets::chrome;
 use crate::util;
 
@@ -32,40 +33,323 @@ const CPU_WARN: f64 = 50.0;
 const CPU_DANGER: f64 = 80.0;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let narrow = area.width < NARROW_WIDTH;
-
-    let [top, middle, bottom] = if narrow {
-        Layout::vertical([
-            Constraint::Length(8),
-            Constraint::Min(8),
-            Constraint::Length(7),
-        ])
-        .areas(area)
-    } else {
-        Layout::vertical([
-            Constraint::Percentage(42),
-            Constraint::Percentage(24),
-            Constraint::Percentage(34),
-        ])
-        .areas(area)
-    };
-
-    render_cards(frame, top, app);
-    render_outputs(frame, middle, app);
-    render_bitrate(frame, bottom, app);
+    if !app.has_measurements() {
+        render_unavailable(frame, area, app);
+        return;
+    }
+    if area.width < NARROW_WIDTH || area.height < 24 {
+        render_compact(frame, area, app);
+        return;
+    }
+    let [headlines, analytics, resources, outputs] = Layout::vertical([
+        Constraint::Length(5),
+        Constraint::Min(8),
+        Constraint::Length(if area.height >= 34 { 9 } else { 6 }),
+        Constraint::Length(6),
+    ])
+    .areas(area);
+    render_headlines(frame, headlines, app);
+    let [network, health] =
+        Layout::horizontal([Constraint::Percentage(65), Constraint::Percentage(35)])
+            .areas(analytics);
+    render_bitrate(frame, network, app);
+    health_card(frame, health, app);
+    let [system, video] = Layout::horizontal([Constraint::Ratio(1, 2); 2]).areas(resources);
+    system_card(frame, system, app);
+    video_card(frame, video, app);
+    render_outputs(frame, outputs, app);
 }
 
-/// System / Video / Health, side by side or stacked.
-fn render_cards(frame: &mut Frame, area: Rect, app: &App) {
-    let regions = views::deck(
-        area,
-        &[Constraint::Ratio(1, 3); 3],
-        &[Constraint::Ratio(1, 3); 3],
+fn render_headlines(frame: &mut Frame, area: Rect, app: &App) {
+    let s = &app.snapshot;
+    let t = app.theme;
+    let current = s.connection.is_connected() && !app.telemetry_stale() && !app.paused;
+    let cards: Vec<Rect> = if area.width >= NARROW_WIDTH {
+        Layout::horizontal([Constraint::Ratio(1, 4); 4])
+            .split(area)
+            .to_vec()
+    } else {
+        Layout::vertical([Constraint::Ratio(1, 2); 2])
+            .split(area)
+            .iter()
+            .flat_map(|row| {
+                Layout::horizontal([Constraint::Ratio(1, 2); 2])
+                    .split(*row)
+                    .to_vec()
+            })
+            .collect()
+    };
+    metric_tile(
+        frame,
+        cards[0],
+        "Stream bitrate",
+        if current {
+            util::bitrate(s.stream_bitrate)
+        } else {
+            "—".into()
+        },
+        if !current {
+            if app.paused {
+                "display paused".into()
+            } else {
+                "last known / stale".into()
+            }
+        } else if s.stream.reconnecting {
+            "reconnecting".into()
+        } else if s.stream.active {
+            format!("LIVE  {}", util::duration_ms(s.stream.duration_ms))
+        } else {
+            "OFFLINE / not streaming".into()
+        },
+        t.accent,
+        &s.history.stream_bitrate,
+        app,
     );
+    metric_tile(
+        frame,
+        cards[1],
+        "Frame pacing",
+        format!("{:.1} fps", s.stats.active_fps),
+        if current {
+            format!(
+                "{} render",
+                util::frame_time(s.stats.average_frame_render_time)
+            )
+        } else {
+            "last known / stale".into()
+        },
+        t.color_when_low(s.fps_ratio() * 100.0, 95.0, 85.0),
+        &s.history.fps,
+        app,
+    );
+    metric_tile(
+        frame,
+        cards[2],
+        "CPU / OBS",
+        util::percent(s.stats.cpu_usage),
+        format!("{} resident", util::bytes(s.stats.memory_bytes() as u64)),
+        t.color_when_high(s.stats.cpu_usage, CPU_WARN, CPU_DANGER),
+        &s.history.cpu,
+        app,
+    );
+    metric_tile(
+        frame,
+        cards[3],
+        "Backpressure",
+        util::percent(s.stream.congestion_percent()),
+        format!("{} dropped frames", s.stream.skipped_frames),
+        t.color_when_high(s.stream.congestion_percent(), 20.0, 50.0),
+        &s.history.congestion,
+        app,
+    );
+}
 
-    system_card(frame, regions[0], app);
-    video_card(frame, regions[1], app);
-    health_card(frame, regions[2], app);
+/// Compact keeps the important readings side-by-side instead of stacking
+/// full cards into two-row slivers. The detail tabs retain the full inventory.
+fn render_compact(frame: &mut Frame, area: Rect, app: &App) {
+    if area.height < 12 {
+        render_minimal(frame, area, app);
+        return;
+    }
+    let [headlines, analytics, outputs] = Layout::vertical([
+        Constraint::Length(if area.width < NARROW_WIDTH { 8 } else { 4 }),
+        Constraint::Min(0),
+        Constraint::Length(6),
+    ])
+    .areas(area);
+    render_headlines(frame, headlines, app);
+    if analytics.height >= 7 && analytics.width >= 64 {
+        let [network, health] =
+            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .areas(analytics);
+        render_bitrate(frame, network, app);
+        health_card(frame, health, app);
+    } else {
+        render_bitrate(frame, analytics, app);
+    }
+    render_outputs(frame, outputs, app);
+}
+
+/// When borders would cost the measurements, drop the furniture, not data.
+fn render_minimal(frame: &mut Frame, area: Rect, app: &App) {
+    let s = &app.snapshot;
+    let t = app.theme;
+    let current = !app.telemetry_stale() && !app.paused;
+    let [verdict_area, data] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    frame.render_widget(
+        Paragraph::new(verdict(
+            if app.telemetry_stale() {
+                "STALE"
+            } else if app.paused {
+                "PAUSED"
+            } else {
+                s.health().label()
+            },
+            if current {
+                health_color(s.health(), t)
+            } else {
+                t.warning
+            },
+            t,
+        )),
+        verdict_area,
+    );
+    let [left, right] = Layout::horizontal([Constraint::Ratio(1, 2); 2]).areas(data);
+    frame.render_widget(
+        Paragraph::new(vec![
+            chrome::row(
+                "BITRATE",
+                if current {
+                    util::bitrate(s.stream_bitrate)
+                } else {
+                    "—".into()
+                },
+                t.accent,
+                8,
+                t,
+            ),
+            chrome::row(
+                "CPU",
+                util::percent(s.stats.cpu_usage),
+                t.color_when_high(s.stats.cpu_usage, CPU_WARN, CPU_DANGER),
+                8,
+                t,
+            ),
+            chrome::row(
+                "MEM",
+                util::bytes(s.stats.memory_bytes() as u64),
+                t.fg,
+                8,
+                t,
+            ),
+            chrome::row(
+                "STREAM",
+                if !current {
+                    "last known".into()
+                } else if s.stream.active {
+                    util::duration_ms(s.stream.duration_ms)
+                } else {
+                    "offline".into()
+                },
+                t.muted,
+                8,
+                t,
+            ),
+        ]),
+        left,
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            chrome::row(
+                "FPS",
+                format!("{:.1} fps", s.stats.active_fps),
+                t.accent_alt,
+                8,
+                t,
+            ),
+            chrome::row(
+                "CONGEST",
+                util::percent(s.stream.congestion_percent()),
+                t.color_when_high(s.stream.congestion_percent(), 20.0, 50.0),
+                8,
+                t,
+            ),
+            chrome::row(
+                "DROPS",
+                s.stream.skipped_frames.to_string(),
+                Loss::network_drop(&s.stream).color(t),
+                8,
+                t,
+            ),
+            chrome::row(
+                "REC",
+                if !current {
+                    "last known".into()
+                } else if s.record.paused {
+                    "paused".into()
+                } else if s.record.active {
+                    util::duration_ms(s.record.duration_ms)
+                } else {
+                    "idle".into()
+                },
+                t.info,
+                8,
+                t,
+            ),
+        ]),
+        right,
+    );
+}
+
+fn render_unavailable(frame: &mut Frame, area: Rect, app: &App) {
+    let t = app.theme;
+    let (title, color, message, hint) = match &app.snapshot.connection {
+        ConnectionState::Connected => (
+            "WARMING UP",
+            t.info,
+            "OBS connected. Waiting for the first telemetry sample.".to_string(),
+            "Measurements appear after OBS answers the stats request.".to_string(),
+        ),
+        ConnectionState::Connecting { attempt } => (
+            "CONNECTING",
+            t.warning,
+            format!("Opening the OBS telemetry link / attempt {attempt}"),
+            "No measurements yet. The dashboard will populate automatically.".to_string(),
+        ),
+        ConnectionState::Disconnected {
+            reason,
+            hint,
+            retry_in,
+        } => (
+            "OFFLINE",
+            t.danger,
+            reason.clone(),
+            hint.map(str::to_string).unwrap_or_else(|| {
+                format!(
+                    "Retry in {}s. Check OBS Tools > WebSocket Server Settings.",
+                    retry_in.as_secs()
+                )
+            }),
+        ),
+        ConnectionState::Fatal { reason, hint } => (
+            "CONNECTION FAILED",
+            t.danger,
+            reason.clone(),
+            hint.unwrap_or("Check your connection configuration, then restart obs-stats.")
+                .to_string(),
+        ),
+    };
+    let inner = chrome::frame_panel(
+        frame,
+        area,
+        chrome::panel_with_badge(
+            "Overview / telemetry link",
+            title,
+            color,
+            false,
+            t,
+            app.unicode,
+        ),
+    );
+    let content = chrome::centered(inner, inner.width.min(76), inner.height.min(9));
+    frame.render_widget(
+        Paragraph::new(vec![
+            verdict(title, color, t),
+            Line::from(""),
+            chrome::placeholder(&message, t),
+            Line::from(""),
+            chrome::placeholder(&hint, t),
+            Line::from(""),
+            chrome::placeholder(
+                "System / Video / Health — no samples, no pretend numbers.",
+                t,
+            ),
+            chrome::placeholder("? help   : commands   t themes   q quit", t),
+        ])
+        .wrap(ratatui::widgets::Wrap { trim: true }),
+        content,
+    );
 }
 
 fn system_card(frame: &mut Frame, area: Rect, app: &App) {
@@ -238,7 +522,35 @@ fn health_card(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let mut lines = vec![verdict(health.label(), color, theme), Line::from("")];
+    let mut lines = vec![
+        verdict(
+            if !app.telemetry_stale() && !app.paused {
+                health.label()
+            } else {
+                "STALE"
+            },
+            if !app.telemetry_stale() && !app.paused {
+                color
+            } else {
+                theme.warning
+            },
+            theme,
+        ),
+        Line::from(Span::styled(
+            if app.telemetry_stale() || app.paused {
+                "Last-known readings. Not current health."
+            } else {
+                match health {
+                    Health::Healthy => "Smooth frames. Main-character energy.",
+                    Health::Strained => "Less swagger. More headroom.",
+                    Health::Dropping => "Viewers deserve better. Check the pipeline.",
+                }
+            },
+            Style::default().fg(theme.muted),
+        ))
+        .centered(),
+        Line::from(""),
+    ];
     lines.extend(health_rows(snapshot, theme));
 
     let text_rows = (lines.len() as u16).min(inner.height);
@@ -298,16 +610,18 @@ pub fn health_rows(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
 
 /// Stream and recording cards.
 fn render_outputs(frame: &mut Frame, area: Rect, app: &App) {
-    let regions = views::deck(
-        area,
-        &[Constraint::Ratio(1, 2); 2],
-        &[Constraint::Ratio(1, 2); 2],
-    );
+    let regions = if area.width >= 56 {
+        Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(area)
+    } else {
+        Layout::vertical([Constraint::Ratio(1, 2); 2]).split(area)
+    };
 
     let theme = app.theme;
     let snapshot = &app.snapshot;
 
-    let stream_block = if snapshot.stream.active {
+    let stream_block = if app.telemetry_stale() || app.paused {
+        chrome::panel_with_badge("Stream", "STALE", theme.warning, false, theme, app.unicode)
+    } else if snapshot.stream.active {
         chrome::panel_with_badge("Stream", "LIVE", theme.danger, false, theme, app.unicode)
     } else {
         chrome::panel_with_note("Stream", "idle", false, theme, app.unicode)
@@ -315,19 +629,30 @@ fn render_outputs(frame: &mut Frame, area: Rect, app: &App) {
     let stream_inner = chrome::frame_panel(frame, regions[0], stream_block);
     frame.render_widget(Paragraph::new(stream_rows(snapshot, theme)), stream_inner);
 
-    let record_block = match (snapshot.record.active, snapshot.record.paused) {
-        (true, true) => chrome::panel_with_badge(
+    let record_block = if app.telemetry_stale() || app.paused {
+        chrome::panel_with_badge(
             "Recording",
-            "paused",
+            "STALE",
             theme.warning,
             false,
             theme,
             app.unicode,
-        ),
-        (true, false) => {
-            chrome::panel_with_badge("Recording", "REC", theme.info, false, theme, app.unicode)
+        )
+    } else {
+        match (snapshot.record.active, snapshot.record.paused) {
+            (true, true) => chrome::panel_with_badge(
+                "Recording",
+                "paused",
+                theme.warning,
+                false,
+                theme,
+                app.unicode,
+            ),
+            (true, false) => {
+                chrome::panel_with_badge("Recording", "REC", theme.info, false, theme, app.unicode)
+            }
+            (false, _) => chrome::panel_with_note("Recording", "idle", false, theme, app.unicode),
         }
-        (false, _) => chrome::panel_with_note("Recording", "idle", false, theme, app.unicode),
     };
     let record_inner = chrome::frame_panel(frame, regions[1], record_block);
     frame.render_widget(Paragraph::new(record_rows(snapshot, theme)), record_inner);
@@ -428,18 +753,76 @@ fn render_bitrate(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme;
     let history = &app.snapshot.history.stream_bitrate;
     let block = chrome::panel_with_note(
-        "Stream bitrate",
-        util::bitrate(app.snapshot.stream_bitrate),
+        if !app.telemetry_stale() && !app.paused {
+            format!("Stream bitrate / {}", app.snapshot.health().label())
+        } else {
+            "Stream bitrate / STALE".into()
+        },
+        if !app.telemetry_stale() && !app.paused {
+            util::bitrate(app.snapshot.stream_bitrate)
+        } else {
+            "retained history".into()
+        },
         false,
         theme,
         app.unicode,
     );
     let inner = chrome::frame_panel(frame, area, block);
+    let detail_rows = if inner.height >= 6 { 2 } else { 0 };
+    let [summary, plot, pressure] = Layout::vertical([
+        Constraint::Length(detail_rows),
+        Constraint::Min(0),
+        Constraint::Length(u16::from(inner.height >= 8)),
+    ])
+    .areas(inner);
+    let mut headline = crate::tui::views::value_unit(
+        if !app.telemetry_stale() && !app.paused {
+            util::bitrate(app.snapshot.stream_bitrate)
+        } else {
+            "—".into()
+        },
+        "outbound",
+        theme.accent,
+        theme,
+    );
+    headline.push(Span::styled(
+        "  / target unavailable",
+        Style::default().fg(theme.muted),
+    ));
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(headline),
+            Line::from(Span::styled(
+                history_summary(history, axis_bitrate),
+                Style::default().fg(theme.muted),
+            )),
+        ]),
+        summary,
+    );
+    if pressure.height > 0 {
+        let [label, strip] =
+            Layout::horizontal([Constraint::Length(20), Constraint::Min(0)]).areas(pressure);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "Backpressure history",
+                Style::default().fg(theme.muted),
+            ))),
+            label,
+        );
+        heat_strip(
+            frame,
+            strip,
+            &app.snapshot.history.congestion,
+            20.0,
+            50.0,
+            app,
+        );
+    }
 
     // 1 Mbps floor keeps an idle chart flat instead of amplifying noise.
     line_chart(
         frame,
-        inner,
+        plot,
         history,
         "bitrate",
         axis_bitrate,
@@ -486,6 +869,84 @@ mod tests {
         };
         snapshot.stream_bitrate = 6_000_000.0;
         snapshot
+    }
+
+    fn drawn(snapshot: Snapshot, width: u16, height: u16) -> String {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = App::new(crate::config::Config::default());
+        app.snapshot = snapshot;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn initial_connection_states_do_not_claim_healthy_measured_zeroes() {
+        for state in [
+            ConnectionState::Connecting { attempt: 1 },
+            ConnectionState::Connected,
+            ConnectionState::Disconnected {
+                reason: "socket closed".into(),
+                hint: None,
+                retry_in: std::time::Duration::from_secs(2),
+            },
+            ConnectionState::Fatal {
+                reason: "authentication failed".into(),
+                hint: None,
+            },
+        ] {
+            let mut snapshot = Snapshot::new(8);
+            snapshot.connection = state;
+            let screen = drawn(snapshot, 80, 24);
+            assert!(!screen.contains("HEALTHY"));
+            assert!(!screen.contains("0.0 fps"));
+            assert!(!screen.contains("0 bps"));
+        }
+    }
+
+    #[test]
+    fn compact_and_wide_overviews_keep_headline_values_and_both_outputs() {
+        for (width, height) in [(80, 24), (96, 28), (120, 40), (160, 50)] {
+            let mut snapshot = streaming_snapshot();
+            snapshot.connection = ConnectionState::Connected;
+            snapshot.last_poll = Some(std::time::Instant::now());
+            snapshot.stats.active_fps = 59.9;
+            snapshot.stats.cpu_usage = 12.5;
+            let screen = drawn(snapshot, width, height);
+            for value in [
+                "6.00 Mbps",
+                "59.9 fps",
+                "12.5%",
+                "Stream",
+                "Recording",
+                "HEALTHY",
+            ] {
+                assert!(screen.contains(value), "{width}x{height} clipped {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn disconnected_overview_labels_retained_measurements_stale() {
+        let mut snapshot = streaming_snapshot();
+        snapshot.last_poll = Some(std::time::Instant::now());
+        snapshot.connection = ConnectionState::Disconnected {
+            reason: "closed".into(),
+            hint: None,
+            retry_in: std::time::Duration::from_secs(1),
+        };
+        let screen = drawn(snapshot, 120, 40);
+        assert!(screen.contains("STALE"));
+        assert!(screen.contains("retained history"));
+        assert!(!screen.contains(" LIVE "));
     }
 
     #[test]

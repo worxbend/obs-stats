@@ -1,4 +1,4 @@
-//! `obs-stats` — a btop-style terminal dashboard for OBS Studio.
+//! `obs-stats` — a terminal-native observability dashboard for OBS Studio.
 //!
 //! The crate is laid out as four layers, each of which can be tested without
 //! the one above it:

@@ -24,10 +24,10 @@ const VISIBLE_ROWS: u16 = 12;
 pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -> (Rect, Rect) {
     // +2 border, +2 for the query row and its rule.
     let height = (VISIBLE_ROWS + 4).min(area.height);
-    let region = chrome::centered(area, 64.min(area.width), height);
+    let region = chrome::centered(area, 76.min(area.width), height);
     let block = chrome::panel_with_badge(
         app.palette.title(),
-        &format!("{}", app.palette.matches.len()),
+        &format!("{} matches", app.palette.matches.len()),
         app.theme.accent,
         true,
         app.theme,
@@ -39,10 +39,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, state: &mut ListState) -
         return (region, inner);
     }
 
-    let [query_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    let [query_area, divider, list_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
 
-    frame.render_widget(Paragraph::new(query_line(app)), query_area);
+    let query = query_line(app);
+    let cursor = query_area.x.saturating_add(query.width() as u16);
+    frame.render_widget(Paragraph::new(query), query_area);
+    if query_area.width > 0 && query_area.height > 0 {
+        frame.set_cursor_position((
+            cursor.min(query_area.right().saturating_sub(1)),
+            query_area.y,
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(chrome::section(
+            "COMMANDS",
+            divider.width as usize,
+            app.theme,
+            app.unicode,
+        )),
+        divider,
+    );
 
     if app.palette.matches.is_empty() {
         frame.render_widget(

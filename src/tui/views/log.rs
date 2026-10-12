@@ -8,13 +8,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::metrics::LogEntry;
 use crate::obs::client::LogLevel;
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
 use crate::tui::view::View;
+use crate::tui::views;
 use crate::tui::views::scenes::context_summary;
 use crate::tui::widgets::chrome;
 use crate::tui::widgets::list;
@@ -27,15 +28,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // `App::take_list_state`.
     let mut state = app.take_list_state(View::Log);
 
-    let [context_area, list_area] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).areas(area);
+    let [summary, context_area, body] = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Length(3),
+        Constraint::Min(4),
+    ])
+    .areas(area);
+    render_summary(frame, summary, &entries, app);
+    let [list_area, inspection] = if area.width >= 100 {
+        Layout::horizontal([Constraint::Min(40), Constraint::Length(36)]).areas(body)
+    } else {
+        [body, Rect::default()]
+    };
 
-    let context_block = chrome::panel("Now", false, theme, app.unicode);
+    let context_block =
+        chrome::panel_with_note("Now", "last reported context", false, theme, app.unicode);
     let context_inner = chrome::frame_panel(frame, context_area, context_block);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                "scene · profile · collection   ",
+                "scene / profile / collection   ",
                 Style::default().fg(theme.muted),
             ),
             Span::styled(
@@ -48,12 +60,38 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let block = chrome::panel_with_note(
         "Events",
-        format!("{}", entries.len()),
+        format!("{} retained / oldest first", entries.len()),
         true,
         theme,
         app.unicode,
     );
-    let inner = chrome::frame_panel(frame, list_area, block);
+    let panel_inner = chrome::frame_panel(frame, list_area, block);
+    let [header, inner] = Layout::vertical([
+        Constraint::Length(u16::from(!entries.is_empty())),
+        Constraint::Min(0),
+    ])
+    .areas(panel_inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "  TIME     LEVEL   EVENT",
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        header,
+    );
+    if inspection.width > 0 {
+        let inner = chrome::frame_panel(
+            frame,
+            inspection,
+            chrome::panel_with_note("Selected event", "inspect", false, theme, app.unicode),
+        );
+        frame.render_widget(
+            Paragraph::new(event_detail(entries.get(app.selection(View::Log)), theme))
+                .wrap(Wrap { trim: false }),
+            inner,
+        );
+    }
 
     if entries.is_empty() {
         frame.render_widget(
@@ -84,7 +122,87 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     app.put_list_state(View::Log, inner, state);
 }
 
-/// One log row: relative timestamp, severity glyph, message.
+fn render_summary(frame: &mut Frame, area: Rect, entries: &[LogEntry], app: &App) {
+    let regions = Layout::horizontal([Constraint::Ratio(1, 3); 3]).split(area);
+    let warnings = entries
+        .iter()
+        .filter(|entry| entry.level == LogLevel::Warn)
+        .count();
+    let errors = entries
+        .iter()
+        .filter(|entry| entry.level == LogLevel::Error)
+        .count();
+    let empty = crate::metrics::History::new(1);
+    let latest = entries.last().map_or_else(
+        || "no events yet".to_string(),
+        |entry| {
+            format!(
+                "latest +{}",
+                crate::util::duration_ms(entry.at.as_millis() as u64)
+            )
+        },
+    );
+    for (index, title, value, note, color) in [
+        (0, "Events", entries.len().to_string(), latest, app.theme.fg),
+        (
+            1,
+            "Warnings",
+            warnings.to_string(),
+            "retained buffer".to_string(),
+            app.theme.warning,
+        ),
+        (
+            2,
+            "Errors",
+            errors.to_string(),
+            "retained buffer".to_string(),
+            app.theme.danger,
+        ),
+    ] {
+        views::metric_tile(
+            frame,
+            regions[index],
+            title,
+            value,
+            note,
+            color,
+            &empty,
+            app,
+        );
+    }
+}
+
+fn level_name(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Info => "INFO",
+        LogLevel::Warn => "WARN",
+        LogLevel::Error => "ERROR",
+    }
+}
+
+fn event_detail(entry: Option<&LogEntry>, theme: &Theme) -> Vec<Line<'static>> {
+    let Some(entry) = entry else {
+        return vec![chrome::placeholder("no event selected", theme)];
+    };
+    let (_, color) = severity(entry.level, theme, false);
+    vec![
+        Line::from(chrome::badge(level_name(entry.level), color, theme)),
+        chrome::row(
+            "App elapsed",
+            format!("+{}", crate::util::duration_ms(entry.at.as_millis() as u64)),
+            theme.muted,
+            12,
+            theme,
+        ),
+        Line::from(""),
+        Line::from(Span::styled(
+            entry.message.clone(),
+            Style::default().fg(theme.fg),
+        )),
+    ]
+}
+
+/// One log row: relative timestamp, severity glyph + name, message.
 pub fn line(entry: &LogEntry, theme: &Theme, unicode: bool) -> Line<'static> {
     let (glyph, color) = severity(entry.level, theme, unicode);
     Line::from(vec![
@@ -92,6 +210,10 @@ pub fn line(entry: &LogEntry, theme: &Theme, unicode: bool) -> Line<'static> {
         Span::styled(
             format!(" {glyph} "),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:<6} ", level_name(entry.level)),
+            Style::default().fg(color),
         ),
         Span::styled(entry.message.clone(), Style::default().fg(theme.fg)),
     ])
@@ -121,6 +243,60 @@ fn severity(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_text(app: &mut App, width: u16, height: u16) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn event_header_and_inspector_do_not_shift_click_mapping() {
+        for width in [80, 120] {
+            let mut app = App::new(crate::config::Config::default());
+            app.view = View::Log;
+            app.snapshot.log = vec![
+                entry(LogLevel::Warn, "first event", 10),
+                entry(LogLevel::Error, "second event", 20),
+            ];
+            let text = render_text(&mut app, width, 30);
+            let region = app.regions.list.unwrap();
+            assert!(
+                text.lines()
+                    .nth(region.y as usize)
+                    .unwrap()
+                    .contains("first event")
+            );
+            assert!(!app.click_row(region.y - 1));
+            assert!(app.click_row(region.y + 1));
+            assert_eq!(app.selection(View::Log), 1);
+            let text = render_text(&mut app, width, 30);
+            assert!(text.contains("WARN"));
+            assert!(text.contains("ERROR"));
+            assert!(text.contains("retained buffer"));
+        }
+    }
+
+    #[test]
+    fn event_inspector_keeps_full_elapsed_time_past_the_row_clock_wrap() {
+        let long = entry(LogLevel::Error, "complete detail", 100 * 60 + 5);
+        let text = crate::tui::testing::lines_text(&event_detail(Some(&long), theme::FALLBACK));
+        assert!(text.contains("+1:40:05"));
+        assert!(text.contains("complete detail"));
+        assert_eq!(timestamp(&long), "00:05", "row geometry remains stable");
+    }
+
     use crate::tui::testing::line_text;
     use crate::tui::theme;
     use std::time::Duration;

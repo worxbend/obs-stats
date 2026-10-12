@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::metrics::Snapshot;
 use crate::tui::app::App;
@@ -31,12 +31,29 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let selected = app.selection(View::Scenes);
     let scenes = &app.snapshot.scenes;
 
-    let [list_area, side] =
-        Layout::horizontal([Constraint::Min(30), Constraint::Length(34)]).areas(area);
+    let [routing, body, hint] = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Min(4),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    render_routing(frame, routing, app);
+    frame.render_widget(
+        Paragraph::new(chrome::placeholder(
+            "Read-only / selection inspects a scene; it never switches OBS",
+            theme,
+        )),
+        hint,
+    );
+    let [list_area, side] = if area.width >= 90 {
+        Layout::horizontal([Constraint::Min(30), Constraint::Length(36)]).areas(body)
+    } else {
+        Layout::vertical([Constraint::Min(4), Constraint::Length(6)]).areas(body)
+    };
 
     let block = chrome::panel_with_note(
         "Scenes",
-        format!("{}", scenes.scenes.len()),
+        format!("{} scenes / inspect", scenes.scenes.len()),
         true,
         theme,
         app.unicode,
@@ -77,7 +94,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     app.put_list_state(View::Scenes, inner, state);
-    render_context(frame, side, app);
+    render_context(frame, side, app, area.width >= 90);
 }
 
 /// One scene row, tagged PROGRAM / PREVIEW where applicable.
@@ -133,17 +150,86 @@ pub fn scene_line(
     Line::from(spans)
 }
 
-/// The right-hand column: profiles and scene collections.
-fn render_context(frame: &mut Frame, area: Rect, app: &App) {
+fn render_routing(frame: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme;
+    let [program, preview] = Layout::horizontal([Constraint::Ratio(1, 2); 2]).areas(area);
+    for (rect, title, name, color) in [
+        (
+            program,
+            "Program",
+            &app.snapshot.scenes.current_program,
+            theme.danger,
+        ),
+        (
+            preview,
+            "Preview",
+            &app.snapshot.scenes.current_preview,
+            theme.info,
+        ),
+    ] {
+        let inner = chrome::frame_panel(
+            frame,
+            rect,
+            chrome::panel_with_note(title, "last reported", false, theme, app.unicode),
+        );
+        let value = if name.is_empty() {
+            "not reported"
+        } else {
+            name
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    util::truncate(value, inner.width as usize),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    if title == "Program" {
+                        "current output scene"
+                    } else {
+                        "reported preview scene"
+                    },
+                    Style::default().fg(theme.muted),
+                )),
+            ]),
+            inner,
+        );
+    }
+}
+
+/// Inspector and OBS inventory; narrow screens keep the active names visible.
+fn render_context(frame: &mut Frame, area: Rect, app: &App, wide: bool) {
     let theme = app.theme;
     let snapshot = &app.snapshot;
 
-    let [profiles, collections] = Layout::vertical([Constraint::Ratio(1, 2); 2]).areas(area);
+    let [profiles, collections] = if wide {
+        let [inspection, names] =
+            Layout::vertical([Constraint::Length(7), Constraint::Min(4)]).areas(area);
+        let inner = chrome::frame_panel(
+            frame,
+            inspection,
+            chrome::panel_with_note("Selected scene", "inspect only", false, theme, app.unicode),
+        );
+        frame.render_widget(
+            Paragraph::new(selected_scene(snapshot, app.selection(View::Scenes), theme))
+                .wrap(Wrap { trim: false }),
+            inner,
+        );
+        Layout::vertical([Constraint::Ratio(1, 2); 2]).areas(names)
+    } else {
+        Layout::horizontal([Constraint::Ratio(1, 2); 2]).areas(area)
+    };
 
-    let profile_block = chrome::panel("Profiles", false, theme, app.unicode);
+    let profile_block = chrome::panel_with_note(
+        "Profiles",
+        format!("{} reported", snapshot.profiles.len()),
+        false,
+        theme,
+        app.unicode,
+    );
     let profile_inner = chrome::frame_panel(frame, profiles, profile_block);
     frame.render_widget(
-        Paragraph::new(name_list(
+        Paragraph::new(context_names(
             &snapshot.profiles,
             &snapshot.current_profile,
             "no profiles reported",
@@ -154,10 +240,16 @@ fn render_context(frame: &mut Frame, area: Rect, app: &App) {
         profile_inner,
     );
 
-    let collection_block = chrome::panel("Collections", false, theme, app.unicode);
+    let collection_block = chrome::panel_with_note(
+        "Collections",
+        format!("{} reported", snapshot.collections.len()),
+        false,
+        theme,
+        app.unicode,
+    );
     let collection_inner = chrome::frame_panel(frame, collections, collection_block);
     frame.render_widget(
-        Paragraph::new(name_list(
+        Paragraph::new(context_names(
             &snapshot.collections,
             &snapshot.current_collection,
             "no collections reported",
@@ -167,6 +259,58 @@ fn render_context(frame: &mut Frame, area: Rect, app: &App) {
         )),
         collection_inner,
     );
+}
+
+fn selected_scene(snapshot: &Snapshot, selected: usize, theme: &Theme) -> Vec<Line<'static>> {
+    let Some(scene) = snapshot.scenes.scenes.get(selected) else {
+        return vec![chrome::placeholder("no scene selected", theme)];
+    };
+    vec![
+        Line::from(Span::styled(
+            scene.name.clone(),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        )),
+        chrome::row("OBS index", scene.index.to_string(), theme.muted, 12, theme),
+        chrome::row(
+            "Program",
+            if scene.name == snapshot.scenes.current_program {
+                "yes"
+            } else {
+                "no"
+            },
+            theme.fg,
+            12,
+            theme,
+        ),
+        chrome::row(
+            "Preview",
+            if scene.name == snapshot.scenes.current_preview {
+                "yes"
+            } else {
+                "no"
+            },
+            theme.fg,
+            12,
+            theme,
+        ),
+    ]
+}
+
+// Put the current name first so a clipped context panel never hides it.
+fn context_names(
+    names: &[String],
+    current: &str,
+    empty: &str,
+    width: usize,
+    theme: &Theme,
+    unicode: bool,
+) -> Vec<Line<'static>> {
+    let mut ordered = names.to_vec();
+    ordered.sort_by_key(|name| name != current);
+    if !current.is_empty() && !ordered.iter().any(|name| name == current) {
+        ordered.insert(0, current.to_string());
+    }
+    name_list(&ordered, current, empty, width, theme, unicode)
 }
 
 /// A list of names with the active one marked.
@@ -232,6 +376,64 @@ pub fn context_summary(snapshot: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_text(app: &mut App, width: u16, height: u16) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn routing_inspector_and_click_regions_preserve_read_only_selection() {
+        for width in [80, 120] {
+            let mut app = App::new(crate::config::Config::default());
+            app.view = View::Scenes;
+            app.snapshot.scenes.scenes = vec![
+                crate::obs::stats::Scene {
+                    name: "First scene".into(),
+                    index: 7,
+                },
+                crate::obs::stats::Scene {
+                    name: "Second scene".into(),
+                    index: 2,
+                },
+            ];
+            app.snapshot.scenes.current_program = "First scene".into();
+            let text = render_text(&mut app, width, 30);
+            assert!(text.contains("Read-only"));
+            assert!(text.contains("Program"));
+            let region = app.regions.list.unwrap();
+            let row = text.lines().nth(region.y as usize).unwrap();
+            assert!(
+                row.contains("First scene"),
+                "registered geometry points at the actual row"
+            );
+            assert!(app.click_row(region.y + 1));
+            assert_eq!(app.selection(View::Scenes), 1);
+            assert_eq!(app.snapshot.scenes.current_program, "First scene");
+        }
+    }
+
+    #[test]
+    fn active_context_is_visible_before_other_inventory_names() {
+        let names = vec!["Other".into(), "Current".into()];
+        let rows = context_names(&names, "Current", "none", 32, theme::FALLBACK, false);
+        assert!(line_text(&rows[0]).contains("Current"));
+        let rows = context_names(&[], "Known current", "none", 32, theme::FALLBACK, false);
+        assert!(line_text(&rows[0]).contains("Known current"));
+    }
+
     use crate::obs::stats::SceneList;
     use crate::tui::testing::{line_text, lines_text};
     use crate::tui::theme;

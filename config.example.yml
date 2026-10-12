@@ -30,7 +30,7 @@ connection:
 ui:
   # Built-in theme id. Run `obs-stats themes` to list them all, or press F2
   # in the app to preview and switch themes live.
-  theme: claude
+  theme: grafana
 
   # How often the hot metrics (CPU, FPS, frame times, output status) are
   # polled, in milliseconds. Range: 100–60000. Scenes, inputs and profiles
@@ -41,7 +41,7 @@ ui:
   # Range: 10–3600.
   history_seconds: 120
 
-  # Draw Unicode block glyphs, braille charts and rounded borders.
+  # Draw Unicode block glyphs, braille charts and terminal-native borders.
   # Set to false on a Linux VT or any terminal without a Unicode font.
   unicode: true
 

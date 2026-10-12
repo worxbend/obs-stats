@@ -52,10 +52,10 @@ That also reports whether the password variable is set, without printing it.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `theme` | theme id | `claude` | See [themes.md](themes.md), or run `obs-stats themes`. |
+| `theme` | theme id | `grafana` | See [themes.md](themes.md), or run `obs-stats themes`. |
 | `poll_interval_ms` | 100–60000 | `1000` | How often the hot metrics are polled. Scenes, inputs, profiles and collections refresh at a tenth of this rate. |
 | `history_seconds` | 10–3600 | `120` | How much history the charts retain. Independent of the poll rate — changing the rate changes the sample count, not the window. |
-| `unicode` | bool | `true` | Block glyphs, braille charts, rounded borders. Turn off for a Linux VT. |
+| `unicode` | bool | `true` | Block glyphs, braille charts, terminal-native borders. Turn off for a Linux VT. |
 | `show_icons` | bool | `true` | The glyph column in tab titles. |
 | `mouse` | bool | `true` | Scroll to move a selection, click a tab to switch. |
 | `start_view` | view id | `overview` | One of `overview`, `performance`, `stream`, `scenes`, `audio`, `log`. |

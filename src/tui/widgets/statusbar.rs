@@ -16,15 +16,23 @@ use crate::tui::widgets::chrome;
 pub const HEIGHT: u16 = 1;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
-    let [left, right] =
-        Layout::horizontal([Constraint::Min(20), Constraint::Length(28)]).areas(area);
-
     let hints = hints(app);
     let (state, targets) = state(app);
+    // Size the utility rail from its actual content, including PAUSED and
+    // long theme names. Click geometry then measures exactly what was drawn.
+    let rail_width = (state.width() as u16).min(area.width.saturating_sub(12));
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(12), Constraint::Length(rail_width)]).areas(area);
     let hit_rects = right_aligned_rects(&state, &targets, right);
 
-    frame.render_widget(Paragraph::new(hints), left);
-    frame.render_widget(Paragraph::new(state).alignment(Alignment::Right), right);
+    let rail_style = Style::default().bg(app.theme.surface_hi());
+    frame.render_widget(Paragraph::new(hints).style(rail_style), left);
+    frame.render_widget(
+        Paragraph::new(state)
+            .style(rail_style)
+            .alignment(Alignment::Right),
+        right,
+    );
 
     app.regions.hits.extend(hit_rects);
 }
@@ -40,11 +48,7 @@ fn right_aligned_rects(
     targets: &[(usize, Hit)],
     area: Rect,
 ) -> Vec<(Rect, Hit)> {
-    let widths: Vec<u16> = line
-        .spans
-        .iter()
-        .map(|span| span.content.chars().count() as u16)
-        .collect();
+    let widths: Vec<u16> = line.spans.iter().map(|span| span.width() as u16).collect();
     let total: u16 = widths.iter().sum();
 
     // A line wider than its column is clipped from the left by the alignment,
@@ -83,7 +87,7 @@ fn hints(app: &App) -> Line<'static> {
     if let Some(toast) = &app.toast {
         return Line::from(vec![
             Span::styled(
-                "▸ ",
+                if app.unicode { "▸ " } else { "> " },
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
@@ -125,14 +129,10 @@ fn hints(app: &App) -> Line<'static> {
         ],
     };
 
-    let glyphs = chrome::glyphs(app.unicode);
     let mut spans = Vec::with_capacity(pairs.len() * 3);
     for (index, (key, label)) in pairs.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled(
-                format!(" {} ", glyphs.separator),
-                Style::default().fg(theme.border),
-            ));
+            spans.push(Span::raw(" "));
         }
         // The key is a keycap chip, the action plain text beside it — the
         // same visual language as the which-key popup.
@@ -193,7 +193,10 @@ fn state(app: &App) -> (Line<'static>, Vec<(usize, Hit)>) {
         Style::default().fg(theme.muted),
     ));
 
-    spans.push(Span::styled(" · ", Style::default().fg(theme.border)));
+    spans.push(Span::styled(
+        if app.unicode { " · " } else { " | " },
+        Style::default().fg(theme.border),
+    ));
     targets.push((spans.len(), Hit::ThemeName));
     spans.push(Span::styled(
         app.theme.label.to_string(),
@@ -212,6 +215,51 @@ mod tests {
 
     fn app() -> App {
         App::new(Config::default())
+    }
+
+    #[test]
+    fn utility_targets_follow_the_drawn_cells_for_every_palette_and_pause_state() {
+        use ratatui::{Terminal, backend::TestBackend};
+        for theme in crate::tui::theme::THEMES {
+            for paused in [false, true] {
+                for unicode in [false, true] {
+                    let mut app = app();
+                    app.theme = theme;
+                    app.paused = paused;
+                    app.unicode = unicode;
+                    let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+                    terminal
+                        .draw(|frame| render(frame, frame.area(), &mut app))
+                        .unwrap();
+                    for (hit, expected) in [(Hit::Poll, "1000ms"), (Hit::ThemeName, theme.label)] {
+                        let (rect, _) = app
+                            .regions
+                            .hits
+                            .iter()
+                            .find(|(_, target)| *target == hit)
+                            .unwrap_or_else(|| panic!("missing {hit:?} for {}", theme.id));
+                        let text: String = (rect.x..rect.right())
+                            .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                            .collect();
+                        assert_eq!(
+                            text, expected,
+                            "{} paused={paused} unicode={unicode}",
+                            theme.id
+                        );
+                    }
+                    assert!(app.regions.hits.iter().any(|(_, hit)| *hit == Hit::Pause));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_toasts_and_utility_rail_are_plain_ascii() {
+        let mut app = app();
+        app.unicode = false;
+        app.notify("refreshed".into(), Instant::now());
+        assert!(line_text(&hints(&app)).is_ascii());
+        assert!(line_text(&state(&app).0).is_ascii());
     }
 
     #[test]
@@ -302,7 +350,7 @@ mod tests {
         let (line, _) = state(&app);
         let rendered = line_text(&line);
         assert!(rendered.contains("1000ms"));
-        assert!(rendered.contains("Claude"));
+        assert!(rendered.contains("Grafana"));
         assert!(!rendered.contains("PAUSED"));
     }
 

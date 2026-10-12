@@ -13,8 +13,10 @@
 //! ```
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+use clap::{Parser, ValueEnum};
 
 use obs_stats::config::Config;
 use obs_stats::metrics::Snapshot;
@@ -54,9 +56,193 @@ const SHOWN_VERSION: &str = "0.1.0";
 /// Padding around the terminal grid, so the image reads as a window.
 const PADDING: f32 = 12.0;
 
-/// Set by `--ascii`, so the fallback rendering can be inspected the same way.
-static ASCII: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// These are synthetic presentation fixtures, never recorded production data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Scenario {
+    Healthy,
+    Strained,
+    Drops,
+    Loading,
+    Offline,
+    Retrying,
+    Paused,
+    RecordingPaused,
+    Stale,
+}
 
+impl Scenario {
+    const ALL: [Self; 9] = [
+        Self::Healthy,
+        Self::Strained,
+        Self::Drops,
+        Self::Loading,
+        Self::Offline,
+        Self::Retrying,
+        Self::Paused,
+        Self::RecordingPaused,
+        Self::Stale,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Strained => "strained",
+            Self::Drops => "drops",
+            Self::Loading => "loading",
+            Self::Offline => "offline",
+            Self::Retrying => "retrying",
+            Self::Paused => "paused",
+            Self::RecordingPaused => "recording-paused",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum TextMode {
+    Grid,
+    Summary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Size {
+    width: u16,
+    height: u16,
+}
+
+impl std::str::FromStr for Size {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (width, height) = value.split_once('x').ok_or("size must be WIDTHxHEIGHT")?;
+        let size = Self {
+            width: width.parse().map_err(|_| "width must be an integer")?,
+            height: height.parse().map_err(|_| "height must be an integer")?,
+        };
+        // Bound TestBackend allocations; even a maximum-size capture is ample
+        // for layout inspection, without accepting accidental multi-GB grids.
+        if size.width == 0 || size.height == 0 || size.width > 400 || size.height > 160 {
+            return Err("size must be within 1x1 and 400x160".into());
+        }
+        Ok(size)
+    }
+}
+
+const MATRIX_SIZES: [Size; 5] = [
+    Size {
+        width: 60,
+        height: 18,
+    },
+    Size {
+        width: 80,
+        height: 24,
+    },
+    Size {
+        width: 100,
+        height: 30,
+    },
+    Size {
+        width: WIDTH,
+        height: HEIGHT,
+    },
+    Size {
+        width: 180,
+        height: 50,
+    },
+];
+
+#[derive(Debug, Parser)]
+#[command(about = "Export actual TUI frames; custom previews are always synthetic")]
+struct Options {
+    /// Preserve the deterministic documentation fixture (no network).
+    #[arg(long)]
+    demo: bool,
+    /// Plain text grid, or a semantic summary for accessible inspection.
+    #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "grid")]
+    text: Option<TextMode>,
+    /// Disable Unicode drawing and icons.
+    #[arg(long)]
+    ascii: bool,
+    /// Terminal geometry; repeat to export several sizes.
+    #[arg(long, value_name = "WIDTHxHEIGHT")]
+    size: Vec<Size>,
+    /// Synthetic operating condition; repeat for several scenarios.
+    #[arg(long, value_enum)]
+    scenario: Vec<Scenario>,
+    /// Export one view without overlays; repeat for several views.
+    #[arg(long, value_parser = parse_view)]
+    view: Vec<View>,
+    /// Select a documentation shot, including its overlay; repeat as needed.
+    #[arg(long, value_parser = parse_shot, conflicts_with = "view")]
+    shot: Vec<String>,
+    /// Theme id; repeat for several themes.
+    #[arg(long, value_parser = parse_theme, conflicts_with = "all_themes")]
+    theme: Vec<String>,
+    /// Sweep every built-in theme, including mono.
+    #[arg(long)]
+    all_themes: bool,
+    /// Sweep nine conditions and five terminal sizes (overrides their defaults).
+    #[arg(long)]
+    matrix: bool,
+    /// Export raw cell symbols/colors/modifiers alongside SVGs.
+    #[arg(long, conflicts_with = "text")]
+    cells: bool,
+    /// Output directory (custom previews default to docs/previews, not docs/images).
+    #[arg(long, value_name = "DIR", conflicts_with = "text")]
+    output: Option<PathBuf>,
+}
+
+impl Options {
+    fn preview(&self) -> bool {
+        self.matrix
+            || self.cells
+            || !self.size.is_empty()
+            || !self.scenario.is_empty()
+            || !self.view.is_empty()
+            || !self.shot.is_empty()
+            || !self.theme.is_empty()
+            || self.all_themes
+    }
+
+    fn shots(&self) -> Vec<Shot> {
+        if !self.view.is_empty() {
+            return self
+                .view
+                .iter()
+                .map(|&view| Shot {
+                    name: view.id(),
+                    view,
+                    ..PLAIN
+                })
+                .collect();
+        }
+        SHOTS
+            .iter()
+            .filter(|shot| self.shot.is_empty() || self.shot.iter().any(|name| name == shot.name))
+            .cloned()
+            .collect()
+    }
+}
+
+fn parse_view(value: &str) -> Result<View, String> {
+    View::from_id(value).ok_or_else(|| format!("unknown view '{value}'"))
+}
+
+fn parse_shot(value: &str) -> Result<String, String> {
+    SHOTS
+        .iter()
+        .any(|shot| shot.name == value)
+        .then(|| value.to_string())
+        .ok_or_else(|| format!("unknown shot '{value}'"))
+}
+
+fn parse_theme(value: &str) -> Result<String, String> {
+    theme::find(value)
+        .map(|theme| theme.id.to_string())
+        .ok_or_else(|| format!("unknown theme '{value}'"))
+}
+
+#[derive(Clone)]
 struct Shot {
     name: &'static str,
     view: View,
@@ -76,7 +262,7 @@ const PLAIN: Shot = Shot {
     name: "",
     view: View::Overview,
     overlay: Overlay::None,
-    theme: "claude",
+    theme: "grafana",
     alert: None,
     pending: Pending::None,
     typed: "",
@@ -154,70 +340,173 @@ const SHOTS: &[Shot] = &[
     },
 ];
 
-fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let demo_only = args.iter().any(|arg| arg == "--demo");
-    let text_mode = args.iter().any(|arg| arg == "--text");
-    ASCII.store(
-        args.iter().any(|arg| arg == "--ascii"),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-
-    let snapshot = if demo_only {
-        demo_snapshot()
-    } else {
-        match live_snapshot() {
-            Some(mut live) => {
-                eprintln!("using live OBS data");
-                // Live OBS is usually idle; overlay the streaming state so the
-                // screenshots show the panels a viewer actually cares about.
-                dress_for_camera(&mut live);
-                live
-            }
-            None => {
-                eprintln!("no OBS reachable — using synthetic demo data");
-                demo_snapshot()
-            }
-        }
-    };
-
-    let out_dir = Path::new("docs/images");
-    if !text_mode && std::fs::create_dir_all(out_dir).is_err() {
-        eprintln!("could not create {}", out_dir.display());
-        std::process::exit(1);
-    }
-
-    for shot in SHOTS {
-        let buffer = render(shot, &snapshot);
-
-        if text_mode {
-            println!("\n═══ {} ═══\n{}", shot.name, to_text(&buffer));
-            continue;
-        }
-
-        let path = out_dir.join(format!("{}.svg", shot.name));
-        let svg = to_svg(&buffer, theme::resolve(shot.theme));
-        match std::fs::write(&path, svg) {
-            Ok(()) => println!("wrote {}", path.display()),
-            Err(error) => eprintln!("could not write {}: {error}", path.display()),
-        }
-    }
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run(Options::parse())
 }
 
-fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
+fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
+    let preview = options.preview();
+    let mut now = Instant::now() + Duration::from_secs(600);
+    let (legacy, source) = if preview || options.demo {
+        (
+            demo_snapshot(now),
+            "synthetic fixture; not production telemetry",
+        )
+    } else if let Some(live) = live_snapshot() {
+        // Never dress live measurements with invented output states or history.
+        now = Instant::now();
+        (live, "live OBS measurements; no synthetic overlay")
+    } else {
+        (
+            demo_snapshot(now),
+            "synthetic fallback; no OBS reachable; not production telemetry",
+        )
+    };
+    eprintln!("source: {source}");
+
+    let out_dir = options.output.clone().unwrap_or_else(|| {
+        PathBuf::from(if preview {
+            "docs/previews"
+        } else {
+            "docs/images"
+        })
+    });
+    if options.text.is_none() {
+        std::fs::create_dir_all(&out_dir)?;
+    }
+    let sizes = if !options.size.is_empty() {
+        options.size.clone()
+    } else if options.matrix {
+        MATRIX_SIZES.to_vec()
+    } else {
+        vec![Size {
+            width: WIDTH,
+            height: HEIGHT,
+        }]
+    };
+    let scenarios: Vec<Option<Scenario>> = if !options.scenario.is_empty() {
+        options.scenario.iter().copied().map(Some).collect()
+    } else if options.matrix {
+        Scenario::ALL.into_iter().map(Some).collect()
+    } else if preview {
+        vec![Some(Scenario::Healthy)]
+    } else {
+        vec![None]
+    };
+    let themes: Vec<String> = if options.all_themes {
+        theme::THEMES
+            .iter()
+            .map(|theme| theme.id.to_string())
+            .collect()
+    } else {
+        options.theme.clone()
+    };
+    let mut written = std::collections::HashSet::new();
+    for scenario in scenarios {
+        let snapshot = scenario.map_or_else(
+            || legacy.clone(),
+            |scenario| scenario_snapshot(scenario, now),
+        );
+        for size in &sizes {
+            for shot in options.shots() {
+                let shot_themes = if themes.is_empty() {
+                    vec![shot.theme.to_string()]
+                } else {
+                    themes.clone()
+                };
+                for id in shot_themes {
+                    let mut shot = shot.clone();
+                    shot.theme = theme::resolve(&id).id;
+                    let name = if preview {
+                        format!(
+                            "{}-{}-{}-{}x{}{}",
+                            shot.name,
+                            scenario.map_or("legacy", Scenario::id),
+                            shot.theme,
+                            size.width,
+                            size.height,
+                            if options.ascii { "-ascii" } else { "" }
+                        )
+                    } else {
+                        shot.name.to_string()
+                    };
+                    // Duplicate selection flags must not silently inflate totals.
+                    if !written.insert(name.clone()) {
+                        continue;
+                    }
+                    let buffer = render(&shot, &snapshot, *size, options.ascii, scenario, now);
+                    let provenance = format!(
+                        "{source}; shot={}; scenario={}; theme={}; size={}x{}; ascii={}",
+                        shot.name,
+                        scenario.map_or("legacy", Scenario::id),
+                        shot.theme,
+                        size.width,
+                        size.height,
+                        options.ascii
+                    );
+                    match options.text {
+                        Some(TextMode::Grid) => println!(
+                            "\n=== {name} ===\nSource: {provenance}\n{}",
+                            to_text(&buffer)
+                        ),
+                        Some(TextMode::Summary) => println!(
+                            "\n=== {name} ===\nSource: {provenance}\n{}",
+                            summary(&snapshot, scenario, now)
+                        ),
+                        None => {
+                            let mut svg = to_svg(&buffer, theme::resolve(shot.theme));
+                            if preview {
+                                let end = svg.find('>').expect("SVG opening tag");
+                                svg.insert_str(
+                                    end + 1,
+                                    &format!(
+                                        "\n<title>{}</title><desc>{}</desc>",
+                                        escape(&name),
+                                        escape(&provenance)
+                                    ),
+                                );
+                            }
+                            let path = out_dir.join(format!("{name}.svg"));
+                            std::fs::write(&path, svg)?;
+                            if options.cells {
+                                std::fs::write(
+                                    out_dir.join(format!("{name}.cells.json")),
+                                    cells_json(&buffer, &provenance),
+                                )?;
+                            }
+                            println!("wrote {}", path.display());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("rendered {} unique frames", written.len());
+    Ok(())
+}
+
+fn render(
+    shot: &Shot,
+    snapshot: &Snapshot,
+    size: Size,
+    ascii: bool,
+    scenario: Option<Scenario>,
+    now: Instant,
+) -> Buffer {
     let mut config = Config::default();
     config.ui.theme = shot.theme.to_string();
-    if ASCII.load(std::sync::atomic::Ordering::Relaxed) {
+    if ascii {
         config.ui.unicode = false;
         config.ui.show_icons = false;
     }
     let mut app = App::new(config);
     app.snapshot = snapshot.clone();
     app.view = shot.view;
+    app.paused = scenario == Some(Scenario::Paused);
 
     // The text overlays are opened through the same actions a key would use,
     // so their state is real rather than an empty struct that happens to draw.
-    let at = Instant::now();
+    let at = now;
     match shot.overlay {
         Overlay::Palette => {
             app.handle(Action::OpenPalette, at);
@@ -236,10 +525,17 @@ fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
     app.frame = 3;
     app.version = SHOWN_VERSION.to_string();
 
-    if let Some(kind) = shot.alert {
+    let alert = if scenario == Some(Scenario::Drops) {
+        Some(AlertKind::NetworkDropped)
+    } else if scenario.is_none() || scenario == Some(Scenario::Healthy) {
+        shot.alert
+    } else {
+        None
+    };
+    if let Some(kind) = alert {
         // A fixed instant far in the future keeps the banner up without
         // depending on when the generator happens to run.
-        let at = Instant::now();
+        let at = now;
         app.banner = Some(obs_stats::tui::app::Banner {
             alert: Alert {
                 kind,
@@ -252,9 +548,10 @@ fn render(shot: &Shot, snapshot: &Snapshot) -> Buffer {
         app.alert_count = 2;
     }
 
-    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
+    let mut terminal =
+        Terminal::new(TestBackend::new(size.width, size.height)).expect("test backend");
     terminal
-        .draw(|frame| ui::draw(frame, &mut app))
+        .draw(|frame| ui::draw_at(frame, &mut app, now))
         .expect("draw");
     terminal.backend().buffer().clone()
 }
@@ -313,7 +610,7 @@ fn dress_for_camera(snapshot: &mut Snapshot) {
 }
 
 /// A complete, plausible snapshot for when no OBS is available.
-fn demo_snapshot() -> Snapshot {
+fn demo_snapshot(now: Instant) -> Snapshot {
     let mut snapshot = Snapshot::new(256);
     snapshot.apply(
         Update::Connected(Box::new(Version {
@@ -383,7 +680,209 @@ fn demo_snapshot() -> Snapshot {
     ];
 
     dress_for_camera(&mut snapshot);
+    // The populated fixture represents received samples, not a connected
+    // socket still waiting for its first poll. Pin freshness to capture time.
+    snapshot.polls = 256;
+    snapshot.last_poll = Some(now - Duration::from_secs(1));
+    for entry in &mut snapshot.log {
+        entry.at = Duration::ZERO;
+    }
     snapshot
+}
+
+/// Build coherent samples through the real model: rates, baselines, histories,
+/// and health are derived exactly as they are for OBS polls, not painted on.
+fn scenario_snapshot(scenario: Scenario, now: Instant) -> Snapshot {
+    use obs_stats::metrics::{Histories, LogEntry};
+    use obs_stats::obs::client::PollData;
+
+    if scenario == Scenario::Loading {
+        return Snapshot::new(256);
+    }
+    let mut snapshot = demo_snapshot(now);
+    snapshot.history = Histories::new(256);
+    snapshot.polls = 0;
+    snapshot.log.clear();
+    for step in 0..256_u64 {
+        let wobble = wave(step as usize, 17);
+        let strained = matches!(scenario, Scenario::Strained | Scenario::Drops);
+        let drops = scenario == Scenario::Drops;
+        let stats = Stats {
+            cpu_usage: if strained {
+                78.0 + wobble * 10.0
+            } else {
+                18.4 + wobble * 5.0
+            },
+            memory_usage: 2_140.0 + wobble * 80.0,
+            available_disk_space: if drops { 4_100.0 } else { 412_000.0 },
+            active_fps: if strained { 52.0 + wobble * 2.0 } else { 59.94 },
+            average_frame_render_time: if strained {
+                11.0 + wobble * 2.0
+            } else {
+                4.8 + wobble
+            },
+            render_skipped_frames: 61 + if strained { step / 2 } else { step / 64 },
+            render_total_frames: 1_204_500 + step * 60,
+            output_skipped_frames: 18 + if drops { step * 2 } else { step / 128 },
+            output_total_frames: 253_100 + step * 60,
+            websocket_incoming_messages: 1_284 + step * 3,
+            websocket_outgoing_messages: 1_291 + step * 3,
+        };
+        let stream = StreamStatus {
+            active: true,
+            duration_ms: 3_960_000 + step * 1_000,
+            timecode: "01:10:15.000".into(),
+            congestion: if drops {
+                0.81
+            } else if strained {
+                0.42
+            } else {
+                0.04
+            },
+            bytes: 3_100_000_000 + step * 737_500,
+            skipped_frames: 3 + if drops { step * 8 } else { 0 },
+            total_frames: 126_450 + step * 60,
+            ..StreamStatus::default()
+        };
+        let record = RecordStatus {
+            active: true,
+            paused: scenario == Scenario::RecordingPaused,
+            duration_ms: 3_960_000 + step * 1_000,
+            timecode: "01:10:15.000".into(),
+            bytes: 5_400_000_000
+                + if scenario == Scenario::RecordingPaused {
+                    0
+                } else {
+                    step * 1_275_000
+                },
+        };
+        snapshot.apply(
+            Update::Poll(Box::new(PollData {
+                stats,
+                stream,
+                record,
+            })),
+            now - Duration::from_secs(256 - step),
+        );
+    }
+    snapshot.log = vec![
+        LogEntry {
+            at: Duration::from_secs(0),
+            level: LogLevel::Info,
+            message: "synthetic fixture connected; not production telemetry".into(),
+        },
+        LogEntry {
+            at: Duration::from_secs(14),
+            level: LogLevel::Info,
+            message: "stream started".into(),
+        },
+        LogEntry {
+            at: Duration::from_secs(255),
+            level: if scenario == Scenario::Drops {
+                LogLevel::Error
+            } else {
+                LogLevel::Info
+            },
+            message: format!("fixture condition: {}", scenario.id()),
+        },
+    ];
+    match scenario {
+        Scenario::Offline | Scenario::Retrying => {
+            snapshot.last_poll = Some(now - Duration::from_secs(45));
+            snapshot.apply(
+                Update::Disconnected {
+                    reason: "OBS websocket connection closed (synthetic fixture)".into(),
+                    hint: Some("Check OBS websocket settings and connectivity"),
+                    retry_in: Duration::from_secs(4),
+                },
+                now,
+            );
+            // Set a fixture-relative timestamp, independent of Snapshot::started.
+            if let Some(entry) = snapshot.log.last_mut() {
+                entry.at = Duration::from_secs(300);
+            }
+            if scenario == Scenario::Retrying {
+                snapshot.apply(Update::Connecting { attempt: 3 }, now);
+            }
+        }
+        Scenario::Stale => snapshot.last_poll = Some(now - Duration::from_secs(60)),
+        Scenario::Paused => snapshot.last_poll = Some(now - Duration::from_secs(30)),
+        _ => {}
+    }
+    snapshot
+}
+
+/// Semantic, color-free output complements the cell grid; unavailable or
+/// retained values are explicitly qualified instead of implying live health.
+fn summary(snapshot: &Snapshot, scenario: Option<Scenario>, now: Instant) -> String {
+    let mut text = format!("Connection: {}\n", snapshot.connection.label());
+    if matches!(scenario, Some(Scenario::Paused | Scenario::Stale)) {
+        text.push_str("Telemetry: retained observation, not a fresh live reading\n");
+    }
+    if !snapshot.connection.is_connected() || snapshot.last_poll.is_none() {
+        text.push_str(if snapshot.last_poll.is_some() {
+            "Telemetry: retained last observation, not live\n"
+        } else {
+            "Telemetry: no poll received\n"
+        });
+    } else {
+        let age = snapshot.age(now).expect("last poll exists").as_secs();
+        let _ = writeln!(
+            text,
+            "Telemetry age: {age} seconds; paused: {}",
+            scenario == Some(Scenario::Paused)
+        );
+    }
+    if snapshot.last_poll.is_none() && scenario == Some(Scenario::Loading) {
+        return text;
+    }
+    let _ = writeln!(
+        text,
+        "Observed health: {}\nCPU: {:.1} percent; memory: {:.0} MiB\nFPS: {:.2}; target: {:.2}; render time: {:.2} ms\nStream active (last observed): {}; reconnecting: {}; rate: {:.2} Mbps\nNetwork drops: {} of {} ({:.2} percent); congestion: {:.1} percent\nRender skips (model scope): {}; encoder skips (model scope): {}\nRecording active (last observed): {}; paused: {}; write rate: {:.2} Mbps\nScene: {}; audio inputs: {}",
+        snapshot.health().label(),
+        snapshot.stats.cpu_usage,
+        snapshot.stats.memory_usage,
+        snapshot.stats.active_fps,
+        snapshot.video.target_fps(),
+        snapshot.stats.average_frame_render_time,
+        snapshot.stream.active,
+        snapshot.stream.reconnecting,
+        snapshot.stream_bitrate / 1_000_000.0,
+        snapshot.stream.skipped_frames,
+        snapshot.stream.total_frames,
+        snapshot.stream.drop_percent(),
+        snapshot.stream.congestion_percent(),
+        snapshot.session_render_skipped(),
+        snapshot.session_output_skipped(),
+        snapshot.record.active,
+        snapshot.record.paused,
+        snapshot.record_bitrate / 1_000_000.0,
+        snapshot.scenes.current_program,
+        snapshot.inputs.len()
+    );
+    text
+}
+
+/// Reset is preserved, not converted to a theme color: these are the actual
+/// TestBackend cells. SVG itself retains the historical themed Reset mapping.
+fn cells_json(buffer: &Buffer, provenance: &str) -> String {
+    let cells: Vec<_> = (0..buffer.area.height)
+        .flat_map(|y| {
+            (0..buffer.area.width).map(move |x| {
+                let cell = &buffer[(x, y)];
+                serde_json::json!({ "x": x, "y": y, "symbol": cell.symbol(),
+                "fg": format!("{:?}", cell.fg), "bg": format!("{:?}", cell.bg),
+                "modifiers": format!("{:?}", cell.modifier) })
+            })
+        })
+        .collect();
+    serde_json::to_string_pretty(&serde_json::json!({
+        "schema": 1, "provenance": provenance,
+        "width": buffer.area.width, "height": buffer.area.height,
+        "svg_reset_policy": "theme foreground/background; mono sample #E6E6E6/#12120F",
+        "cells": cells,
+    }))
+    .expect("cell JSON serializes")
 }
 
 fn audio_input(name: &str, kind: &str, muted: bool, volume_db: f64) -> AudioInput {
@@ -665,4 +1164,219 @@ fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obs_stats::metrics::{ConnectionState, Health};
+
+    fn now() -> Instant {
+        Instant::now() + Duration::from_secs(600)
+    }
+
+    #[test]
+    fn options_preserve_legacy_defaults_and_validate_selections() {
+        use clap::CommandFactory;
+        Options::command().debug_assert();
+        let options = Options::try_parse_from(["screenshot", "--demo"]).unwrap();
+        assert!(!options.preview());
+        assert_eq!(options.shots().len(), SHOTS.len());
+        assert_eq!(
+            Options::try_parse_from(["screenshot", "--text"])
+                .unwrap()
+                .text,
+            Some(TextMode::Grid)
+        );
+        for args in [
+            ["--size", "0x24"],
+            ["--size", "999x999"],
+            ["--size", "80"],
+            ["--scenario", "invented"],
+            ["--view", "invented"],
+            ["--theme", "invented"],
+            ["--shot", "invented"],
+        ] {
+            assert!(Options::try_parse_from(["screenshot", args[0], args[1]]).is_err());
+        }
+        let options = Options::try_parse_from([
+            "screenshot",
+            "--view",
+            "audio",
+            "--theme",
+            "mono",
+            "--size",
+            "80x24",
+        ])
+        .unwrap();
+        assert!(options.preview());
+        assert_eq!(options.shots()[0].view, View::Audio);
+        assert_eq!(options.shots().len(), 1);
+    }
+
+    #[test]
+    fn operating_fixtures_derive_real_model_health_and_rates() {
+        let now = now();
+        for (scenario, expected) in [
+            (Scenario::Healthy, Health::Healthy),
+            (Scenario::Strained, Health::Strained),
+            (Scenario::Drops, Health::Dropping),
+        ] {
+            let snapshot = scenario_snapshot(scenario, now);
+            assert_eq!(snapshot.health(), expected, "{scenario:?}");
+            assert_eq!(snapshot.polls, 256);
+            assert_eq!(snapshot.history.cpu.len(), 256);
+            assert_eq!(snapshot.stream_bitrate, 5_900_000.0);
+            assert_eq!(snapshot.record_bitrate, 10_200_000.0);
+            assert_eq!(snapshot.history.cpu.latest(), snapshot.stats.cpu_usage);
+        }
+        let paused = scenario_snapshot(Scenario::RecordingPaused, now);
+        assert!(paused.record.paused);
+        assert_eq!(paused.record_bitrate, 0.0);
+        let stale = scenario_snapshot(Scenario::Stale, now);
+        assert_eq!(stale.age(now), Some(Duration::from_secs(60)));
+        assert!(summary(&stale, Some(Scenario::Stale), now).contains("60 seconds"));
+    }
+
+    #[test]
+    fn unavailability_fixtures_do_not_claim_live_telemetry() {
+        let now = now();
+        let loading = scenario_snapshot(Scenario::Loading, now);
+        assert_eq!(loading.polls, 0);
+        assert!(loading.last_poll.is_none());
+        assert!(loading.history.cpu.is_empty());
+        let text = summary(&loading, Some(Scenario::Loading), now);
+        assert!(text.contains("no poll received"));
+        assert!(!text.contains("HEALTHY"));
+        for scenario in [Scenario::Offline, Scenario::Retrying] {
+            let snapshot = scenario_snapshot(scenario, now);
+            assert!(!snapshot.connection.is_connected());
+            assert_eq!(snapshot.stream_bitrate, 0.0);
+            assert!(snapshot.inputs.iter().all(|input| input.peaks.is_empty()));
+            assert!(summary(&snapshot, Some(scenario), now).contains("not live"));
+        }
+        assert!(matches!(
+            scenario_snapshot(Scenario::Retrying, now).connection,
+            ConnectionState::Connecting { attempt: 3 }
+        ));
+    }
+
+    #[test]
+    fn scenario_size_shot_sweep_is_deterministic_and_ascii_safe() {
+        let first = now();
+        let later = first + Duration::from_secs(3_600);
+        let sizes = ["1x1", "19x7", "60x18", "80x24", "132x38", "180x50"];
+        for scenario in Scenario::ALL {
+            let a = scenario_snapshot(scenario, first);
+            let b = scenario_snapshot(scenario, later);
+            for size in sizes {
+                let size = size.parse().unwrap();
+                for shot in SHOTS {
+                    for ascii in [false, true] {
+                        let one = render(shot, &a, size, ascii, Some(scenario), first);
+                        let two = render(shot, &b, size, ascii, Some(scenario), later);
+                        assert_eq!(one, two, "{} {scenario:?} {size:?}", shot.name);
+                        if ascii {
+                            assert!(
+                                !to_text(&one).chars().any(|c| matches!(c as u32,
+                                    0x2190..=0x21FF | 0x2500..=0x259F | 0x25A0..=0x25FF | 0x1F000..=0x1FFFF)),
+                                "{} {scenario:?} {size:?}",
+                                shot.name
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_view_and_theme_remains_deterministic() {
+        let first = now();
+        let later = first + Duration::from_secs(3_600);
+        for theme in theme::THEMES {
+            for view in View::ALL {
+                let shot = Shot {
+                    view,
+                    theme: theme.id,
+                    ..PLAIN
+                };
+                let size = "132x38".parse().unwrap();
+                let a = render(&shot, &demo_snapshot(first), size, false, None, first);
+                let b = render(&shot, &demo_snapshot(later), size, false, None, later);
+                assert_eq!(
+                    to_svg(&a, theme),
+                    to_svg(&b, theme),
+                    "{} {}",
+                    theme.id,
+                    view.id()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_demo_has_received_samples_not_warming_up() {
+        let now = now();
+        let snapshot = demo_snapshot(now);
+        assert_eq!(snapshot.polls, 256);
+        assert_eq!(snapshot.age(now), Some(Duration::from_secs(1)));
+        let buffer = render(
+            &PLAIN,
+            &snapshot,
+            "132x38".parse().unwrap(),
+            false,
+            None,
+            now,
+        );
+        assert!(!to_text(&buffer).contains("WARMING UP"));
+    }
+
+    #[test]
+    fn export_is_unique_self_describing_and_write_errors_propagate() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().to_str().unwrap();
+        run(Options::try_parse_from([
+            "screenshot",
+            "--view",
+            "overview",
+            "--size",
+            "80x24",
+            "--size",
+            "80x24",
+            "--cells",
+            "--output",
+            path,
+        ])
+        .unwrap())
+        .unwrap();
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+        let svg =
+            std::fs::read_to_string(directory.path().join("overview-healthy-grafana-80x24.svg"))
+                .unwrap();
+        assert!(svg.contains("<desc>synthetic fixture; not production telemetry"));
+        let impossible = directory.path().join("not-a-directory");
+        std::fs::write(&impossible, "existing file").unwrap();
+        let options = Options::try_parse_from([
+            "screenshot",
+            "--demo",
+            "--output",
+            impossible.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(run(options).is_err());
+    }
+
+    #[test]
+    fn cells_preserve_reset_and_column_coordinates() {
+        let mut buffer = Buffer::empty(ratatui::layout::Rect::new(0, 0, 2, 1));
+        buffer[(1, 0)].set_symbol("X").set_fg(Color::Red);
+        let json: serde_json::Value =
+            serde_json::from_str(&cells_json(&buffer, "synthetic fixture")).unwrap();
+        assert_eq!(json["cells"].as_array().unwrap().len(), 2);
+        assert_eq!(json["cells"][1]["x"], 1);
+        assert_eq!(json["cells"][1]["symbol"], "X");
+        assert_eq!(json["cells"][1]["bg"], "Reset");
+        assert_eq!(json["cells"][1]["fg"], "Red");
+    }
 }

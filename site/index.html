@@ -3,27 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>obs-stats — a btop-style terminal dashboard for OBS Studio</title>
-<meta name="description" content="A btop-style terminal dashboard for OBS Studio. Watch CPU, frame pacing, encoder health, outputs, scenes and audio live over obs-websocket 5.x. One static Rust binary.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231E1E2E'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23CBA6F7' font-family='monospace'>▤</text></svg>">
+<title>obs-stats — live OBS telemetry in your terminal</title>
+<meta name="description" content="A read-only terminal dashboard for OBS Studio. Four headline KPIs, network and health analysis, OBS resources and output details, with live scenes, audio and alerts. One Rust binary. No daemon.">
+<meta name="theme-color" content="#0B1018">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230B1018'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='%23FF9830' font-family='monospace'>▤</text></svg>">
 <meta property="og:title" content="obs-stats">
-<meta property="og:description" content="A btop-style terminal dashboard for OBS Studio.">
+<meta property="og:description" content="Live OBS telemetry in your terminal. Read-only monitoring of stream bitrate, frame pacing, OBS resources and output health.">
 <meta property="og:type" content="website">
 <style>
 :root {
-  /* Catppuccin Mocha */
-  --bg: #1E1E2E;          /* base     */
-  --bg-soft: #181825;     /* mantle   */
-  --bg-card: #313244;     /* surface0 */
-  --fg: #CDD6F4;          /* text     */
-  --muted: #A6ADC8;       /* subtext0 */
-  --border: #45475A;      /* surface1 */
-  --accent: #CBA6F7;      /* mauve    */
-  --accent-soft: #F5C2E7; /* pink     */
-  --success: #A6E3A1;     /* green    */
-  --warning: #F9E2AF;     /* yellow   */
-  --danger: #F38BA8;      /* red      */
-  --info: #89B4FA;        /* blue     */
+  /* Grafana signature: the same telemetry colors as the TUI. */
+  color-scheme: dark;
+  --bg: #0B1018;
+  --bg-soft: #101824;
+  --bg-card: #151F2D;
+  --fg: #E8EDF5;
+  --muted: #A5B3C7;
+  --border: #344358;
+  --accent: #FF9830;
+  --accent-soft: #B78BFA;
+  --success: #73D69C;
+  --warning: #F5C462;
+  --danger: #FF6B7A;
+  --info: #40D5E6;
   --radius: 12px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -31,25 +33,30 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    /* Catppuccin Latte */
-    --bg: #EFF1F5;          /* base     */
-    --bg-soft: #E6E9EF;     /* mantle   */
+    /* Readable light counterpart; screenshots retain their own palettes. */
+    color-scheme: light;
+    --bg: #F4F6FA;
+    --bg-soft: #E8EDF5;
     --bg-card: #FFFFFF;
-    --fg: #4C4F69;          /* text     */
-    --muted: #6C6F85;       /* subtext0 */
-    --border: #CCD0DA;      /* surface0 */
-    --accent: #8839EF;      /* mauve    */
-    --accent-soft: #EA76CB; /* pink     */
-    --success: #40A02B;     /* green    */
-    --warning: #DF8E1D;     /* yellow   */
-    --danger: #D20F39;      /* red      */
-    --info: #1E66F5;        /* blue     */
+    --fg: #172235;
+    --muted: #526078;
+    --border: #BCC7D6;
+    --accent: #9D4700;
+    --accent-soft: #7041AC;
+    --success: #237342;
+    --warning: #875B00;
+    --danger: #BD2745;
+    --info: #08727E;
   }
 }
 
 * { box-sizing: border-box; }
 
 html { scroll-behavior: smooth; }
+section, main { scroll-margin-top: 10rem; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 4px; }
+.skip-link { position: absolute; left: 1rem; top: -5rem; z-index: 20; padding: 0.6rem 1rem; background: var(--bg); }
+.skip-link:focus { top: 0.5rem; }
 
 body {
   margin: 0;
@@ -189,11 +196,11 @@ figure { margin: 0; }
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-soft);
-  box-shadow: 0 18px 44px -22px rgba(17, 17, 27, 0.75);
+  box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.75);
 }
 .shot img { display: block; width: 100%; height: auto; }
 
-figcaption {
+.preview-note {
   color: var(--muted);
   font-size: 0.87rem;
   text-align: center;
@@ -217,7 +224,7 @@ h2 {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 1rem;
 }
 
@@ -284,7 +291,8 @@ th { color: var(--muted); font-weight: 600; font-size: 0.82rem; text-transform: 
 td:first-child { width: 34%; }
 tbody tr:last-child td { border-bottom: none; }
 
-.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 2.4rem; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 0 2.4rem; }
+th, td { overflow-wrap: anywhere; }
 
 /* ---------- theme swatches ---------- */
 
@@ -329,14 +337,24 @@ code {
 }
 
 @media (max-width: 640px) {
+  .wrap { width: calc(100% - 2rem); }
+  .nav { gap: 0.65rem 1rem; }
+  .brand { flex-basis: 100%; }
+  .hero { padding-top: 3rem; }
   td:first-child { width: 42%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .btn { transition: none; }
+  .btn:hover { transform: none; }
 }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#top">Skip to content</a>
 
 <header>
-  <nav class="nav wrap">
+  <nav class="nav wrap" aria-label="Main navigation">
     <a class="brand" href="#top">obs<span>-</span>stats</a>
     <a class="link" href="#views">Views</a>
     <a class="link" href="#alerts">Alerts</a>
@@ -347,15 +365,15 @@ code {
   </nav>
 </header>
 
-<main id="top">
+<main id="top" tabindex="-1">
 
 <div class="wrap hero">
   <h1>obs<span>-</span>stats</h1>
-  <p class="tagline">A btop-style terminal dashboard for OBS&nbsp;Studio.</p>
+  <p class="tagline">Live OBS telemetry, in your terminal.</p>
   <p class="sub">
     Watch CPU, frame pacing, encoder health, outputs, scenes and audio — live, from a
     terminal, over obs-websocket&nbsp;5.x. Get told the moment frames start dropping.
-    One static Rust binary. No daemon.
+    Read-only. One Rust binary. No daemon.
   </p>
 
   <div class="badges">
@@ -363,7 +381,7 @@ code {
     <span class="badge"><b>ratatui</b> + crossterm</span>
     <span class="badge"><b>obs-websocket</b> 5.x</span>
     <span class="badge"><b>desktop</b> notifications</span>
-    <span class="badge"><b>24</b> themes</span>
+    <span class="badge"><b>Grafana</b> signature theme</span>
     <span class="badge"><b>MIT</b> licensed</span>
   </div>
 
@@ -380,25 +398,26 @@ code {
   </div>
 
   <figure class="shot">
-    <img src="images/overview.svg" alt="The obs-stats overview dashboard: system, video and health cards above live stream and recording panels, with a stream bitrate chart along the bottom" width="1132" height="708" loading="eager">
+    <img src="images/overview.svg" alt="Overview: four headline KPIs for bitrate, frame pacing, OBS CPU and backpressure, followed by network and health analysis, resources and output details" width="1133" height="708" loading="eager">
   </figure>
-  <figcaption>The Overview deck. Screenshots on this page are rendered by the app itself, with representative sample data.</figcaption>
+  <p class="preview-note">The Overview deck: four KPIs, network and health, resources, then outputs. All previews on this page come from the app’s deterministic renderer with synthetic data — not a live OBS session.</p>
 </div>
 
 <section id="why">
   <div class="wrap">
     <h2>Why not just the OBS stats dock?</h2>
     <p class="lede">
-      OBS tells you <em>that</em> frames were dropped. It does not tell you which pipeline
-      dropped them, whether it started five minutes ago, or whether the cause was your GPU,
-      your encoder, or your uplink. Those have different fixes.
+      Keep render skips, encoder skips and network drops apart. Track their rates and
+      history beside frame pacing and congestion, so you can see which part of the
+      pipeline needs attention. The counters narrow the investigation; they do not
+      identify a hardware fault on their own.
     </p>
 
     <div class="grid">
       <div class="card">
         <span class="icon" style="color:var(--accent)">◈</span>
         <h3>Three loss channels, kept apart</h3>
-        <p>Renderer skips are a GPU problem. Encoder skips are a CPU problem. Network drops are an uplink problem. They are never merged into one number.</p>
+        <p>Render, encoder and network loss stay separate. Each points to a different stage of the pipeline, without pretending to measure GPU load or diagnose the root cause.</p>
       </div>
       <div class="card">
         <span class="icon" style="color:var(--info)">◷</span>
@@ -408,7 +427,7 @@ code {
       <div class="card">
         <span class="icon" style="color:var(--warning)">▲</span>
         <h3>Warning before loss</h3>
-        <p>Frame render time against the frame budget, and encoder congestion, both move <em>before</em> anything is dropped — which is the moment to act.</p>
+        <p>Frame render time against the frame budget, and stream congestion, can reveal strain before frames are lost — giving you a chance to act.</p>
       </div>
       <div class="card">
         <span class="icon" style="color:var(--success)">●</span>
@@ -428,7 +447,7 @@ code {
       <div class="card">
         <span class="icon" style="color:var(--danger)">🔒</span>
         <h3>Secret-safe by design</h3>
-        <p>The password comes from an environment variable and is never written to config, logs or error messages. The config file is always safe to commit.</p>
+        <p>The password comes from an environment variable and is never written to config, logs or error messages. Config stores the variable’s name, not its secret value.</p>
       </div>
     </div>
 
@@ -443,13 +462,13 @@ code {
 <section id="views">
   <div class="wrap">
     <h2>Six dashboards, one keypress apart</h2>
-    <p class="lede">Press a digit, or <kbd>Tab</kbd> through them.</p>
+    <p class="lede">Press a digit, or <kbd>Tab</kbd> through them. Previews below use synthetic data rendered by the app, not captured production telemetry.</p>
 
     <div class="view">
       <div class="view-head"><h3>Overview</h3><kbd>1</kbd></div>
-      <p>System load, video pipeline and a health verdict across the top; the live stream and recording outputs below; a bitrate chart along the bottom.</p>
+      <p>Four headline KPIs — stream bitrate, frame pacing, OBS CPU and backpressure — above network and health analysis, OBS resources and video settings, then stream and recording details.</p>
       <figure class="shot" style="margin-top:0">
-        <img src="images/overview.svg" alt="Overview dashboard" loading="lazy">
+        <img src="images/overview.svg" alt="Overview with four headline KPIs, network and health analysis, resources and output details" loading="lazy">
       </figure>
     </div>
 
@@ -507,7 +526,7 @@ code {
     <figure class="shot" style="margin-top:0">
       <img src="images/alert.svg" alt="The Stream view with a red DROPPING FRAMES banner reading '14 frames in 10s — viewers are seeing stutter', followed by the remedy" loading="lazy">
     </figure>
-    <figcaption>The banner names the cause, the count, and what to change.</figcaption>
+    <p class="preview-note">A synthetic alert preview. The banner names the loss channel, the count, and a suggested remedy.</p>
 
     <div class="grid" style="margin-top:2.4rem">
       <div class="card">
@@ -616,7 +635,7 @@ code {
           <tr><td><kbd>Tab</kbd> / <kbd>⇧Tab</kbd></td><td>Next / previous view</td></tr>
           <tr><td><kbd>1</kbd> … <kbd>6</kbd></td><td>Jump to a view</td></tr>
           <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Move the list cursor</td></tr>
-          <tr><td><kbd>g</kbd> / <kbd>G</kbd></td><td>Top / bottom</td></tr>
+          <tr><td><kbd>gg</kbd> / <kbd>G</kbd></td><td>Top / bottom</td></tr>
         </tbody>
       </table>
 
@@ -639,8 +658,9 @@ code {
 
 <section id="themes">
   <div class="wrap">
-    <h2>24 themes, previewed live</h2>
+    <h2>Built-in themes, previewed live</h2>
     <p class="lede">
+      Grafana is the signature default; classic dark, light and terminal-safe palettes remain available.
       Press <kbd>F2</kbd>. Moving the cursor restyles the <em>entire</em> UI, not just a swatch —
       <kbd>Enter</kbd> keeps it, <kbd>Esc</kbd> puts the old one back.
     </p>
@@ -650,6 +670,7 @@ code {
     </figure>
 
     <div class="themes">
+      <div class="theme"><span class="sw" aria-hidden="true"><i style="background:#FF9830"></i><i style="background:#73D69C"></i><i style="background:#F5C462"></i><i style="background:#FF6B7A"></i><i style="background:#B78BFA"></i></span>Grafana</div>
       <div class="theme"><span class="sw"><i style="background:#D97757"></i><i style="background:#87B37B"></i><i style="background:#E0B44C"></i><i style="background:#E06C5F"></i><i style="background:#7BA9C7"></i></span>Claude</div>
       <div class="theme"><span class="sw"><i style="background:#309AE0"></i><i style="background:#5CC97A"></i><i style="background:#F0B43C"></i><i style="background:#E54B4B"></i><i style="background:#8AD1FF"></i></span>OBS Studio</div>
       <div class="theme"><span class="sw"><i style="background:#6AE05A"></i><i style="background:#6AE05A"></i><i style="background:#F0E050"></i><i style="background:#E05050"></i><i style="background:#50C0E0"></i></span>Btop</div>
@@ -688,7 +709,7 @@ code {
 <section id="install">
   <div class="wrap">
     <h2>Install</h2>
-    <p class="lede">A single static binary. No runtime, no daemon, no dependencies.</p>
+    <p class="lede">One Rust binary. No separate language runtime or daemon. Static musl builds are available for Linux.</p>
 
     <div class="install" style="margin-left:0">
 <span class="c"># Linux, macOS — picks your platform and verifies the checksum</span>

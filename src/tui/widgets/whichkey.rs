@@ -45,7 +45,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Option<Rect> {
 
     let block = chrome::panel_with_note(
         title,
-        format!("{}", entries.len()),
+        format!("{} keys", entries.len()),
         true,
         app.theme,
         app.unicode,

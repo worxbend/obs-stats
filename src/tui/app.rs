@@ -293,6 +293,8 @@ pub struct App {
     pub should_quit: bool,
     /// Monotonic frame counter, used by the header's activity indicator.
     pub frame: u64,
+    /// Explicit presentation clock; captures freeze it through `ui::draw_at`.
+    pub(crate) render_at: Instant,
     /// Version shown in the header.
     ///
     /// A field rather than a direct read of [`crate::VERSION`] so the
@@ -340,6 +342,7 @@ impl App {
             poll_interval: Duration::from_millis(config.ui.poll_interval_ms),
             should_quit: false,
             frame: 0,
+            render_at: Instant::now(),
             version: crate::VERSION.to_string(),
             views: Default::default(),
             overlay_list_state: ListState::default(),
@@ -762,6 +765,28 @@ impl App {
         {
             self.banner = None;
         }
+    }
+
+    /// Whether any hot telemetry has ever arrived. Inventory alone is not a
+    /// measurement, and a successful websocket handshake is not a stats poll.
+    pub fn has_measurements(&self) -> bool {
+        self.snapshot.last_poll.is_some()
+            || self.snapshot.polls > 0
+            || !self.snapshot.history.cpu.is_empty()
+            || !self.snapshot.history.fps.is_empty()
+            || !self.snapshot.history.stream_bitrate.is_empty()
+            || !self.snapshot.history.record_bitrate.is_empty()
+    }
+
+    /// Last-known data must not masquerade as current health on a silent socket.
+    /// Pausing is explicit rather than being described as an acquisition failure.
+    pub fn telemetry_stale(&self) -> bool {
+        self.has_measurements()
+            && (!self.snapshot.connection.is_connected()
+                || (!self.paused
+                    && self.snapshot.age(self.render_at).is_some_and(|age| {
+                        age > (self.poll_interval * 3).max(Duration::from_secs(3))
+                    })))
     }
 
     /// Drop last frame's geometry. Called at the top of every draw, so a

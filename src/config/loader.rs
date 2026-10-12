@@ -147,7 +147,13 @@ mod tests {
     #[test]
     fn shipped_example_config_is_valid() {
         // Guards against the documented example drifting from the schema.
-        parse(DEFAULT_CONFIG_TEMPLATE).expect("config.example.yml must parse and validate");
+        let example =
+            parse(DEFAULT_CONFIG_TEMPLATE).expect("config.example.yml must parse and validate");
+        assert_eq!(
+            example,
+            Config::default(),
+            "starter config drifted from shipped defaults"
+        );
     }
 
     #[test]

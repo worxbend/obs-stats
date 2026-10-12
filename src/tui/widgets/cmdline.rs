@@ -28,13 +28,13 @@ pub fn render(frame: &mut Frame, area: Rect, status: Rect, app: &App) {
     // background is what puts it back.
     frame.render_widget(Clear, status);
     frame.render_widget(
-        Paragraph::new(line(app)).style(Style::default().bg(app.theme.bg)),
+        Paragraph::new(line(app)).style(Style::default().bg(app.theme.surface_hi())),
         status,
     );
 
     // A real cursor, so the terminal's own blink marks the insertion point
     // rather than the app drawing a fake one that never blinks.
-    let column = status.x + 1 + app.command.input.chars().count() as u16;
+    let column = status.x + line(app).width() as u16;
     frame.set_cursor_position((column.min(status.right().saturating_sub(1)), status.y));
 }
 

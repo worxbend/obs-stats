@@ -23,6 +23,12 @@ const MIN_CHROME_HEIGHT: u16 = 8;
 
 /// Draw one frame.
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    draw_at(frame, app, std::time::Instant::now());
+}
+
+/// Render with an explicit clock so age and stale-state captures are reproducible.
+pub fn draw_at(frame: &mut Frame, app: &mut App, now: std::time::Instant) {
+    app.render_at = now;
     let area = frame.area();
 
     // Anything clickable has to re-register itself this frame. A rect left
@@ -47,7 +53,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // The banner only takes a row when there is one to show, so an untroubled
     // dashboard loses nothing to it.
-    let banner_height = if app.banner.is_some() {
+    let banner_height = if app.banner.is_some() || app.telemetry_stale() {
         banner::HEIGHT
     } else {
         0
@@ -65,7 +71,24 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     header::render(frame, header_area, app);
     render_tabs(frame, tabs_area, app);
     app.regions.tabs = tabs_area;
-    banner::render(frame, banner_area, app);
+    if app.banner.is_some() {
+        banner::render(frame, banner_area, app);
+    } else if app.telemetry_stale() {
+        let age = app
+            .snapshot
+            .age(now)
+            .map(|age| format!("{}s ago", age.as_secs()))
+            .unwrap_or_else(|| "age unavailable".into());
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" STALE / last sample {age} / retained telemetry, not current health"),
+                Style::default()
+                    .fg(app.theme.warning)
+                    .bg(app.theme.surface_hi()),
+            ))),
+            banner_area,
+        );
+    }
     views::render(frame, body_area, app);
     app.regions.body = body_area;
     render_scrollbar(frame, app);
@@ -147,15 +170,14 @@ fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
             spans.push(Span::raw(" "));
         }
         if *view == app.view {
-            // The active tab is a pill reversed onto the highlight colour,
-            // which every theme pairs with a readable foreground — for the
-            // shipped palettes highlight_bg *is* the accent, and the flat
-            // mono palette still gets a proper inversion.
+            // The tab is the primary navigation mark; reserve solid brand
+            // colour for it and keep list selections on the quieter highlight.
+            // Span widths stay identical to mouse::tab_at's mirror.
             spans.push(Span::styled(
                 format!(" {} {} ", index + 1, view.tab_label(app.show_icons)),
                 Style::default()
-                    .fg(theme.highlight_fg)
-                    .bg(theme.highlight_bg)
+                    .fg(theme.on_color(theme.accent))
+                    .bg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
@@ -169,7 +191,10 @@ fn render_tabs(frame: &mut Frame, area: Rect, app: &App) {
             ));
         }
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.surface())),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -196,6 +221,43 @@ mod tests {
 
     fn app() -> App {
         App::new(Config::default())
+    }
+
+    #[test]
+    fn silent_connected_telemetry_is_stale_instead_of_healthy_or_live() {
+        use crate::obs::client::{PollData, Update};
+        use crate::obs::stats::{Stats, StreamStatus};
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let mut app = app();
+        app.apply(Update::Connected(Box::default()), now);
+        app.apply(
+            Update::Poll(Box::new(PollData {
+                stats: Stats {
+                    active_fps: 60.0,
+                    ..Stats::default()
+                },
+                stream: StreamStatus {
+                    active: true,
+                    ..StreamStatus::default()
+                },
+                ..PollData::default()
+            })),
+            now,
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| draw_at(frame, &mut app, now + Duration::from_secs(60)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(screen.contains("STALE"));
+        assert!(screen.contains("60s ago"), "no last-sample age: {screen}");
+        assert!(
+            !screen.contains(" HEALTHY "),
+            "stale measurements claimed current health"
+        );
+        assert!(!screen.contains(" LIVE "), "stale output claimed live");
     }
 
     #[test]
@@ -326,7 +388,7 @@ mod tests {
         let rendered = render(&mut app, 120, 40);
         assert!(rendered.contains(":theme no"), "{rendered}");
         // The hints it replaces must not also be on screen.
-        assert!(!rendered.contains("q quit"));
+        assert!(!rendered.lines().last().unwrap().contains("q quit"));
     }
 
     #[test]
@@ -732,6 +794,9 @@ mod tests {
 
         let mut app = app();
         let now = Instant::now();
+        // A poll is data, not proof of a live connection: the real session
+        // always reports the successful handshake before inventory and stats.
+        app.apply(Update::Connected(Box::default()), now);
         app.apply(
             Update::Inventory(Box::new(Inventory {
                 scenes: SceneList {

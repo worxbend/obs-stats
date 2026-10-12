@@ -49,6 +49,23 @@ macro_rules! rgb {
 /// Every built-in theme, in picker order.
 pub const THEMES: &[Theme] = &[
     Theme {
+        id: "grafana",
+        label: "Grafana",
+        bg: rgb!(0x0B, 0x10, 0x18),
+        fg: rgb!(0xE8, 0xED, 0xF5),
+        muted: rgb!(0x8B, 0x9A, 0xAE),
+        accent: rgb!(0xFF, 0x98, 0x30),
+        accent_alt: rgb!(0x40, 0xD5, 0xE6),
+        border: rgb!(0x2B, 0x37, 0x49),
+        border_focus: rgb!(0xFF, 0x98, 0x30),
+        success: rgb!(0x73, 0xD6, 0x9C),
+        warning: rgb!(0xF5, 0xC4, 0x62),
+        danger: rgb!(0xFF, 0x6B, 0x7A),
+        info: rgb!(0xB7, 0x8B, 0xFA),
+        highlight_bg: rgb!(0x26, 0x32, 0x43),
+        highlight_fg: rgb!(0xE8, 0xED, 0xF5),
+    },
+    Theme {
         id: "claude",
         label: "Claude",
         bg: rgb!(0x1B, 0x19, 0x16),
@@ -639,6 +656,22 @@ fn lerp(from: u8, to: u8, t: f32) -> u8 {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn grafana_is_the_signature_default_without_removing_classic_palettes() {
+        let signature = find("grafana").expect("signature palette must exist");
+        assert_eq!(FALLBACK.id, signature.id);
+        assert_eq!(crate::config::UiConfig::default().theme, signature.id);
+        assert_eq!(signature.accent, Color::Rgb(255, 152, 48));
+        assert_eq!(signature.accent_alt, Color::Rgb(64, 213, 230));
+        assert_eq!(signature.info, Color::Rgb(183, 139, 250));
+        for classic in ["claude", "obs", "btop", "mono", "nord"] {
+            assert!(
+                find(classic).is_some(),
+                "classic palette {classic} disappeared"
+            );
+        }
+    }
 
     #[test]
     fn theme_ids_are_unique() {

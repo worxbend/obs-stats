@@ -1,15 +1,18 @@
 # Themes
 
-`obs-stats` ships 24 palettes. Press `F2` or `t` to open the picker; moving the
+`obs-stats` ships a signature `grafana` dark theme alongside the existing palettes. Press `F2` or `t` to open the picker; moving the
 cursor restyles the entire UI live, `Enter` keeps it, `Esc` puts the old one
 back.
 
 <img src="images/themes.svg" alt="The theme picker showing palette swatches and a live full-UI preview" width="900">
 
+The default is deep graphite with orange branding, cyan throughput accents, violet recording signals, and distinct green/amber/red severity colors. Existing configured themes remain unchanged.
+
 ## The list
 
 | id | Name | | id | Name |
 |---|---|---|---|---|
+| `grafana` | Grafana (default) | | | |
 | `claude` | Claude | | `kanagawa` | Kanagawa |
 | `obs` | OBS Studio | | `rose-pine` | Rosé Pine |
 | `btop` | Btop | | `one-dark` | One Dark |
@@ -51,8 +54,8 @@ file is reported at startup with the offending key.
 ## Accessibility
 
 **`high-contrast`** uses pure black, white, and fully saturated primaries. Every
-state is distinguished by more than colour alone: focused panels get a *thicker*
-border as well as an accent one, and the health verdict is a word before it is a
+state is distinguished by more than colour alone: focused panels get an explicit `>` title marker
+as well as an accent border, and the health verdict is a word before it is a
 colour.
 
 **`mono`** uses only the 16 ANSI colours and never paints a background of its
@@ -87,8 +90,8 @@ never requires touching a widget.
 | `info` | Recording state, preview scene, informational rows. |
 | `highlight_bg` / `highlight_fg` | The selected row. |
 
-Two helpers keep colouring consistent across panels: `scale_up` for values that
-get worse as they grow (CPU, congestion, drop rates) and `scale_down` for values
+Two helpers keep colouring consistent across panels: `color_when_high` for values that
+get worse as they grow (CPU, congestion, drop rates) and `color_when_low` for values
 that get worse as they shrink (FPS against target, free disk). So an amber
 number means the same thing wherever you see it.
 

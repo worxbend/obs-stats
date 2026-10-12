@@ -163,7 +163,10 @@ pub fn line_chart(
         return;
     }
 
-    let points = history.tail_points(area.width as usize);
+    // Keep the retained window visible even on a small terminal: the renderer
+    // resolves sub-cell detail, not the acquisition layer. Coordinates are sample
+    // indices, so the axis never implies seconds we did not measure.
+    let points = history.tail_points(history.len());
     if points.is_empty() {
         frame.render_widget(
             Paragraph::new(chrome::placeholder("waiting for data…", theme)),
@@ -175,12 +178,42 @@ pub fn line_chart(
     let x_max = (points.len().saturating_sub(1)).max(1) as f64;
     let (y_min, y_max) = history.axis_range(floor);
 
+    // Ratatui positions the first x label against a capped y-axis gutter;
+    // right-clipping that gutter can silently turn 255 into 5. Own the horizon
+    // row so numeric observation distance is never clipped from the left.
+    let [plot, horizon] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(area);
+    let [past, latest] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(if area.width >= 20 { 6 } else { 0 }),
+    ])
+    .areas(horizon);
+    let distance = points.len().saturating_sub(1);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            if area.width >= 32 {
+                format!("{distance} samples ago")
+            } else {
+                format!("-{distance}")
+            },
+            Style::default().fg(theme.muted),
+        ))),
+        past,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "latest",
+            Style::default().fg(theme.muted),
+        )))
+        .right_aligned(),
+        latest,
+    );
+
     if !unicode {
         // Chart draws its axes with box-drawing runes and its series with
         // braille, neither of which has an ASCII substitute in ratatui.
         frame.render_widget(
-            Paragraph::new(ascii_plot(history, area, y_min, y_max, fmt, color, theme)),
-            area,
+            Paragraph::new(ascii_plot(history, plot, y_min, y_max, fmt, color, theme)),
+            plot,
         );
         return;
     }
@@ -192,8 +225,33 @@ pub fn line_chart(
         .style(Style::default().fg(color))
         .data(&points);
 
+    let grids: Vec<Vec<(f64, f64)>> = [0.25, 0.5, 0.75]
+        .into_iter()
+        .map(|ratio| {
+            let y = y_min + (y_max - y_min) * ratio;
+            vec![(0.0, y), (x_max, y)]
+        })
+        .collect();
+    let mut datasets: Vec<Dataset<'_>> = grids
+        .iter()
+        .map(|grid| {
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(chrome::track_color(theme)))
+                .data(grid)
+        })
+        .collect();
+    datasets.push(dataset);
+    let latest = &points[points.len() - 1..];
+    datasets.push(
+        Dataset::default()
+            .marker(symbols::Marker::Dot)
+            .style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+            .data(latest),
+    );
     let axis_style = Style::default().fg(theme.muted);
-    let chart = Chart::new(vec![dataset])
+    let chart = Chart::new(datasets)
         // Chart paints its plot area through a Canvas whose background is
         // `self.style.bg.unwrap_or(Color::Reset)`. Leave the style unset and
         // that Reset punches a hole straight through the themed background,
@@ -220,7 +278,7 @@ pub fn line_chart(
         )
         .legend_position(None);
 
-    frame.render_widget(chart, area);
+    frame.render_widget(chart, plot);
 }
 
 /// An ASCII scatter plot with a labelled left gutter.
@@ -243,8 +301,9 @@ fn ascii_plot(
         return Vec::new();
     }
 
-    let samples = history.tail(plot_width);
-    // Newest sample on the right; a short history leaves the left blank.
+    let samples = history.tail(history.len());
+    // Compress the retained window to columns, preserving spikes rather than
+    // discarding older samples or averaging a brief failure out of existence.
     let offset = plot_width.saturating_sub(samples.len());
     let span = (y_max - y_min).max(f64::EPSILON);
     let axis_style = Style::default().fg(theme.muted);
@@ -262,16 +321,21 @@ fn ascii_plot(
 
             let text: String = (0..plot_width)
                 .map(|column| {
-                    let Some(sample) = column
-                        .checked_sub(offset)
-                        .and_then(|index| samples.get(index))
-                    else {
+                    let Some(column) = column.checked_sub(offset) else {
                         return ' ';
                     };
-                    let fraction = ((sample - y_min) / span).clamp(0.0, 1.0);
-                    // Row 0 is the top, so invert the fraction to a row index.
-                    let plotted = ((1.0 - fraction) * (height - 1) as f64).round() as usize;
-                    if plotted == row { '*' } else { ' ' }
+                    let columns = samples.len().min(plot_width).max(1);
+                    let start = column * samples.len() / columns;
+                    let end = ((column + 1) * samples.len() / columns).min(samples.len());
+                    if samples[start..end].iter().any(|sample| {
+                        let fraction = ((sample - y_min) / span).clamp(0.0, 1.0);
+                        let plotted = ((1.0 - fraction) * (height - 1) as f64).round() as usize;
+                        plotted == row
+                    }) {
+                        '*'
+                    } else {
+                        ' '
+                    }
                 })
                 .collect();
 
@@ -282,6 +346,86 @@ fn ascii_plot(
             ])
         })
         .collect()
+}
+
+/// Retained-window statistics, never a made-up time interval or target.
+pub fn history_summary(history: &History, fmt: fn(f64) -> String) -> String {
+    if history.is_empty() {
+        return "awaiting samples".into();
+    }
+    format!(
+        "avg {}  peak {}  {} samples",
+        fmt(history.mean()),
+        fmt(history.max()),
+        history.len()
+    )
+}
+
+/// A compact headline card. Its value remains visible before decorative history.
+#[allow(clippy::too_many_arguments)]
+pub fn metric_tile(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    value: String,
+    note: String,
+    color: Color,
+    history: &History,
+    app: &App,
+) {
+    let inner = chrome::frame_panel(
+        frame,
+        area,
+        chrome::panel(title, false, app.theme, app.unicode),
+    );
+    if inner.is_empty() {
+        return;
+    }
+    let [headline, context, trend] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(u16::from(inner.height > 1)),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            value,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ))),
+        headline,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            note,
+            Style::default().fg(app.theme.muted),
+        ))),
+        context,
+    );
+    sparkline(frame, trend, history, 0.0, color, app.unicode);
+}
+
+/// One cell per retained observation, newest on the right. Color encodes the
+/// actual sample severity, not a fabricated aggregate health score.
+pub fn heat_strip(
+    frame: &mut Frame,
+    area: Rect,
+    history: &History,
+    warning: f64,
+    danger: f64,
+    app: &App,
+) {
+    if area.is_empty() || history.is_empty() {
+        return;
+    }
+    let samples = history.tail(area.width as usize);
+    let mut spans = vec![Span::raw(" ".repeat(area.width as usize - samples.len()))];
+    spans.extend(samples.into_iter().map(|sample| {
+        Span::styled(
+            if app.unicode { "▪" } else { ":" },
+            Style::default().fg(app.theme.color_when_high(sample, warning, danger)),
+        )
+    }));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// A large centred verdict badge, e.g. ` HEALTHY ` reversed onto its colour.
@@ -418,6 +562,102 @@ mod tests {
         assert_eq!(axis_percent(4.2), "4%");
         assert_eq!(axis_bitrate(6_000_000.0), "6.00 Mbps");
         assert_eq!(axis_millis(16.67), "16.7ms");
+    }
+
+    #[test]
+    fn chart_horizon_labels_never_clip_away_leading_digits() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut history = History::new(256);
+        for _ in 0..256 {
+            history.push(6_000_000.0);
+        }
+        for width in [28, 36, 64] {
+            let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+            terminal
+                .draw(|frame| {
+                    line_chart(
+                        frame,
+                        frame.area(),
+                        &history,
+                        "bps",
+                        axis_bitrate,
+                        1_000_000.0,
+                        crate::tui::theme::FALLBACK.accent,
+                        crate::tui::theme::FALLBACK,
+                        true,
+                    )
+                })
+                .unwrap();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                screen.contains(if width >= 32 {
+                    "255 samples ago"
+                } else {
+                    "-255"
+                }),
+                "{width} columns changed the numeric horizon: {screen}"
+            );
+        }
+    }
+
+    #[test]
+    fn retained_summary_never_invents_samples() {
+        let mut history = History::new(8);
+        assert_eq!(history_summary(&history, axis_count), "awaiting samples");
+        history.push(20.0);
+        history.push(40.0);
+        assert_eq!(
+            history_summary(&history, axis_count),
+            "avg 30  peak 40  2 samples"
+        );
+    }
+
+    #[test]
+    fn ascii_chart_keeps_an_old_spike_in_a_compressed_window() {
+        let mut history = History::new(100);
+        history.push(100.0);
+        for _ in 0..99 {
+            history.push(0.0);
+        }
+        let plot = ascii_plot(
+            &history,
+            Rect::new(0, 0, 20, 5),
+            0.0,
+            100.0,
+            axis_count,
+            Color::Green,
+            crate::tui::theme::FALLBACK,
+        );
+        assert!(plot[0].spans[2].content.contains('*'), "old spike was lost");
+        assert!(plot[4].spans[2].content.contains('*'));
+    }
+
+    #[test]
+    fn pressure_heatstrip_uses_real_sample_severity_and_ascii_fallback() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let mut app = App::new(crate::config::Config::default());
+        let mut history = History::new(4);
+        for value in [0.0, 20.0, 50.0] {
+            history.push(value);
+        }
+        for unicode in [false, true] {
+            app.unicode = unicode;
+            let mut terminal = Terminal::new(TestBackend::new(4, 1)).unwrap();
+            terminal
+                .draw(|frame| heat_strip(frame, frame.area(), &history, 20.0, 50.0, &app))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(1, 0)].fg, app.theme.success);
+            assert_eq!(buffer[(2, 0)].fg, app.theme.warning);
+            assert_eq!(buffer[(3, 0)].fg, app.theme.danger);
+            assert_eq!(buffer[(3, 0)].symbol(), if unicode { "▪" } else { ":" });
+        }
     }
 
     #[test]

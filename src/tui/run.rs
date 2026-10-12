@@ -60,6 +60,23 @@ async fn event_loop(
     notifier: &Notifier,
 ) -> Result<()> {
     let mut events = EventStream::new();
+    event_loop_with_events(terminal, app, updates, commands, notifier, &mut events).await
+}
+
+/// The event stream is injectable so scheduling is tested without a TTY.
+async fn event_loop_with_events<B, E>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    updates: &mut tokio::sync::mpsc::Receiver<client::Update>,
+    commands: &tokio::sync::mpsc::Sender<Command>,
+    notifier: &Notifier,
+    events: &mut E,
+) -> Result<()>
+where
+    B: ratatui::backend::Backend,
+    E: futures_util::Stream<Item = io::Result<Event>> + Unpin,
+{
+    let mut updates_open = true;
     let mut frames = tokio::time::interval(FRAME_INTERVAL);
     frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -70,7 +87,10 @@ async fn event_loop(
         .map_err(|error| Error::Terminal(error.to_string()))?;
 
     loop {
-        tokio::select! {
+        // Acquisition can push audio meters much faster than the terminal
+        // needs frames. Fold every update into the model, but coalesce their
+        // rendering at the frame clock; keys and resize still draw immediately.
+        let redraw = tokio::select! {
             biased;
 
             event = events.next() => {
@@ -87,32 +107,48 @@ async fn event_loop(
                     Some(Err(error)) => return Err(Error::Terminal(error.to_string())),
                     None => return Ok(()),
                 }
+                true
             }
 
-            update = updates.recv() => {
-                let update = update.unwrap_or_else(||
-                    // The session task ended without telling us; treat that as
-                    // a disconnect rather than quitting the UI out from under
-                    // the user.
-                    client::Update::Disconnected {
-                        reason: "the OBS session task stopped".into(),
-                        hint: None,
-                        retry_in: Duration::from_secs(0),
+            // Place the ready frame clock ahead of the update channel so a
+            // sustained meter-event burst cannot starve rendering.
+            _ = frames.tick() => true,
+
+            update = updates.recv(), if updates_open => {
+                let update = match update {
+                    Some(update) => Some(update),
+                    None => {
+                        // A closed receiver is permanently ready. Fuse it after
+                        // one observation or it burns a core between frames.
+                        updates_open = false;
+                        match app.snapshot.connection {
+                            crate::metrics::ConnectionState::Fatal { .. }
+                            | crate::metrics::ConnectionState::Disconnected { .. } => None,
+                            _ => Some(client::Update::Disconnected {
+                                reason: "the OBS session task stopped".into(),
+                                hint: None,
+                                retry_in: Duration::ZERO,
+                            }),
+                        }
                     }
-                );
+                };
 
                 // Sending is fire-and-forget: the notifier owns its own thread,
                 // so a wedged desktop cannot stall a frame.
-                for alert in app.apply(update, Instant::now()) {
-                    notifier.send(&alert);
+                if let Some(update) = update {
+                    for alert in app.apply(update, Instant::now()) {
+                        notifier.send(&alert);
+                    }
                 }
+                false
             }
-
-            _ = frames.tick() => {}
-        }
+        };
 
         if app.should_quit {
             return Ok(());
+        }
+        if !redraw {
+            continue;
         }
 
         app.tick(Instant::now());
@@ -247,6 +283,81 @@ mod tests {
             .collect();
         drawn(&mut app, 120, 40);
         app
+    }
+
+    #[tokio::test]
+    async fn telemetry_bursts_are_folded_without_rendering_each_update() {
+        let mut app = app();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let (tx, mut updates) = tokio::sync::mpsc::channel(256);
+        for _ in 0..192 {
+            tx.try_send(client::Update::Poll(Box::default())).unwrap();
+        }
+        let (commands, _receiver) = tokio::sync::mpsc::channel(4);
+        let notifier = Notifier::spawn(false);
+        let mut events = futures_util::stream::pending();
+        let result = tokio::time::timeout(
+            Duration::from_millis(220),
+            event_loop_with_events(
+                &mut terminal,
+                &mut app,
+                &mut updates,
+                &commands,
+                &notifier,
+                &mut events,
+            ),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "the pending input stream should still be running"
+        );
+        assert_eq!(app.snapshot.polls, 192, "all acquisition updates must land");
+        assert!(
+            app.frame <= 4,
+            "updates caused {} frames instead of clock-coalesced rendering",
+            app.frame
+        );
+    }
+
+    #[tokio::test]
+    async fn a_closed_update_channel_preserves_the_original_fatal_reason() {
+        let mut app = app();
+        app.apply(
+            client::Update::Fatal {
+                reason: "authentication failed".into(),
+                hint: Some("check credentials"),
+            },
+            Instant::now(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let (tx, mut updates) = tokio::sync::mpsc::channel(4);
+        drop(tx);
+        let (commands, _receiver) = tokio::sync::mpsc::channel(4);
+        let notifier = Notifier::spawn(false);
+        let mut events = futures_util::stream::pending();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(120),
+                event_loop_with_events(
+                    &mut terminal,
+                    &mut app,
+                    &mut updates,
+                    &commands,
+                    &notifier,
+                    &mut events
+                )
+            )
+            .await
+            .is_err()
+        );
+        assert!(matches!(&app.snapshot.connection,
+            crate::metrics::ConnectionState::Fatal { reason, .. } if reason == "authentication failed"));
+        assert_eq!(
+            app.snapshot.log.len(),
+            1,
+            "closed channel repeated terminal updates"
+        );
     }
 
     #[test]

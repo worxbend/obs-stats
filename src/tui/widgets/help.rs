@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::tui::app::App;
 use crate::tui::keys::{BINDINGS, SECTIONS};
@@ -25,10 +25,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) -> Rect {
     let height = (lines.len() as u16 + 3).min(area.height);
     let region = chrome::centered(area, 66.min(area.width), height);
 
-    frame.render_widget(Clear, region);
-    let block = chrome::panel("Help", true, app.theme, app.unicode)
-        .style(Style::default().bg(app.theme.bg));
-    frame.render_widget(Paragraph::new(lines).block(block), region);
+    let block = chrome::panel_with_note("Help", "ESC close", true, app.theme, app.unicode);
+    let inner = chrome::popup(frame, region, block, app.theme);
+    frame.render_widget(Paragraph::new(lines), inner);
     region
 }
 
@@ -160,6 +159,23 @@ mod tests {
                 .unwrap_or_else(|| panic!("{section} out of order"));
             cursor += at;
         }
+    }
+
+    #[test]
+    fn help_uses_the_same_raised_surface_as_other_overlays() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let app = App::new(crate::config::Config::default());
+        let mut terminal = Terminal::new(TestBackend::new(100, 60)).unwrap();
+        let mut region = Rect::default();
+        terminal
+            .draw(|frame| {
+                region = render(frame, frame.area(), &app);
+            })
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(region.x + 2, region.y + 1)].bg,
+            app.theme.surface_hi()
+        );
     }
 
     #[test]

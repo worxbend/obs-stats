@@ -2,7 +2,7 @@
 
 # obs-stats
 
-**A btop-style terminal dashboard for OBS Studio.**
+**A terminal-native observability cockpit for OBS Studio.**
 
 Watch CPU, frame pacing, encoder health, outputs, scenes and audio — live, from a terminal, over obs-websocket 5.x.
 
@@ -34,7 +34,7 @@ OBS's own stats dock tells you *that* frames were dropped. It does not tell you 
 | 🎯 **Three loss channels, kept apart** | Renderer skips (your GPU), encoder skips (your CPU/encoder), network drops (your uplink). Different causes, different fixes. |
 | 🔔 **Alerts when it matters** | Frames actually being lost raise a dashboard banner *and* a Linux desktop notification — naming the cause, the count, and the fix. |
 | ⏱️ **Per-stream counters** | Drops are measured from the moment the stream started, not since OBS launched — so yesterday's numbers don't hide today's problem. |
-| 🎨 **24 built-in themes** | A btop-style live picker that restyles the whole UI as you move, with `Enter` to keep and `Esc` to revert. |
+| 🎨 **Signature Grafana theme + built-in palettes** | A btop-style live picker that restyles the whole UI as you move, with `Enter` to keep and `Esc` to revert. |
 | ⌨️ **AstroNvim-shaped keymap** | `space` leader with a which-key popup, `:` command line with completion, and a fuzzy palette — plus `gg`, `]b`, `Ctrl-d` where you would expect them. |
 | 🔒 **Secret-safe by design** | The password comes from an environment variable and is never written to config, logs, or error messages. |
 | 🤖 **Scriptable** | `obs-stats once` prints the same numbers as JSON with a stable schema and documented exit codes. |
@@ -100,7 +100,9 @@ obs-stats config        # prints the effective settings
 
 ### Overview — `1`
 
-The at-a-glance deck. System load, video pipeline, and a health verdict across the top; the live stream and recording outputs below; a bitrate chart along the bottom.
+The telemetry cockpit: four headline metrics, a retained-history throughput chart, rolling averages and peaks, a backpressure heat strip, and a health verdict with attitude. System, video, stream and recording cards keep the supporting detail close. Compact terminals fold the headlines into two columns without burying the values.
+
+No samples means a connection-state screen, not pretend zero readings. Lost connections label retained telemetry `STALE`. Encoder type and configured target bitrate are not available from the current integration and are never guessed.
 
 <img src="docs/images/overview.svg" alt="Overview dashboard" width="880">
 
@@ -245,6 +247,7 @@ Press `F2` or `t`. Moving the cursor restyles the entire UI live; `Enter` keeps 
 
 | id | name | | id | name |
 |---|---|---|---|---|
+| `grafana` | Grafana (default) | | | |
 | `claude` | Claude | | `kanagawa` | Kanagawa |
 | `obs` | OBS Studio | | `rose-pine` | Rosé Pine |
 | `btop` | Btop | | `one-dark` | One Dark |
@@ -280,7 +283,7 @@ connection:
   connect_timeout_ms: 3000
 
 ui:
-  theme: claude
+  theme: grafana
   poll_interval_ms: 1000    # hot metrics; scenes/inputs refresh at 1/10 this rate
   history_seconds: 120      # how much history the charts retain
   unicode: true
@@ -339,7 +342,7 @@ One background task owns the socket. It reconnects on its own with backoff, poll
 
 Polling is split by cost. Every tick sends one batched request for `GetStats` + `GetStreamStatus` + `GetRecordStatus`. Every tenth tick adds scenes, inputs, profiles, collections and video settings — things that change on human timescales. Audio levels arrive as `InputVolumeMeters` events rather than being polled at all.
 
-The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. 526 tests, no live OBS required.
+The layers are separable and separately tested: `obs` (protocol) → `metrics` (model, rates, history) → `tui` (pure rendering). The UI performs no I/O; the model holds no handles. Model and rendering tests run without live OBS. Meter bursts are coalesced at the 10 Hz frame clock while keyboard input and resize render immediately; Ratatui writes only changed cells.
 
 ---
 
@@ -350,6 +353,9 @@ The layers are separable and separately tested: `obs` (protocol) → `metrics` (
 - [Reading the metrics](docs/metrics.md) — what each number means and what to do about it
 - [Key bindings](docs/keybindings.md)
 - [Themes](docs/themes.md)
+- [Dashboard design and preview scenarios](docs/design.md)
+- [Contributing and release verification](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
 Elsewhere:
@@ -362,7 +368,7 @@ Elsewhere:
 ## 🛠️ Development
 
 ```sh
-cargo test                                  # 526 tests, no OBS needed
+cargo test                                  # no OBS needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run --example screenshot -- --demo    # regenerate docs/images/*.svg

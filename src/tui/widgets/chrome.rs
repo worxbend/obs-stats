@@ -102,8 +102,8 @@ const ASCII_BORDER: border::Set = border::Set {
 
 /// A bordered panel, filled with the theme's `surface` elevation.
 ///
-/// The focused panel gets a thick border in the accent colour; everything
-/// else gets a plain one, so focus is legible without colour alone.
+/// Fine square rules keep dense telemetry legible. The active title gains a
+/// prompt marker as well as its accent outline, so monochrome keeps focus.
 pub fn panel<'a>(
     title: impl Into<String>,
     focused: bool,
@@ -116,7 +116,7 @@ pub fn panel<'a>(
         theme.border
     };
     let title_style = Style::default()
-        .fg(if focused { theme.accent } else { theme.muted })
+        .fg(if focused { theme.accent } else { theme.fg })
         .add_modifier(Modifier::BOLD);
 
     let block = Block::default()
@@ -126,17 +126,14 @@ pub fn panel<'a>(
         // the page rather than as a rectangle drawn around text. On a flat
         // theme this is `Color::Reset` and costs nothing.
         .style(Style::default().bg(theme.surface()))
-        .title(Span::styled(format!(" {} ", title.into()), title_style))
+        .title(Span::styled(
+            format!(" {}{} ", if focused { "> " } else { "" }, title.into()),
+            title_style,
+        ))
         .padding(Padding::horizontal(1));
 
     if unicode {
-        // Focus is signalled by weight as well as colour, so it survives a
-        // monochrome terminal.
-        block.border_type(if focused {
-            BorderType::Thick
-        } else {
-            BorderType::Rounded
-        })
+        block.border_type(BorderType::Plain)
     } else {
         block.border_set(ASCII_BORDER)
     }
@@ -809,6 +806,23 @@ mod tests {
             ASCII_BORDER.horizontal_bottom,
         ] {
             assert!(glyph.is_ascii(), "{glyph} is not ASCII");
+        }
+    }
+
+    #[test]
+    fn fine_panel_rules_keep_a_non_color_focus_marker() {
+        for unicode in [false, true] {
+            let mut terminal = Terminal::new(TestBackend::new(24, 5)).unwrap();
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(panel("Telemetry", true, theme(), unicode), frame.area());
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let title: String = (0..24).map(|x| buffer[(x, 0)].symbol()).collect();
+            assert!(title.contains("> Telemetry"), "{title}");
+            assert_eq!(buffer[(0, 0)].symbol(), if unicode { "┌" } else { "+" });
+            assert_eq!(buffer[(1, 2)].bg, theme().surface());
         }
     }
 

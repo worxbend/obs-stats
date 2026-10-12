@@ -95,7 +95,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            theme: "claude".to_string(),
+            theme: "grafana".to_string(),
             poll_interval_ms: 1000,
             history_seconds: 120,
             unicode: true,
@@ -278,7 +278,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.connection.url(), "ws://127.0.0.1:4455");
         assert_eq!(config.connection.password_env, "OBS_WEBSOCKET_PASSWORD");
-        assert_eq!(config.ui.theme, "claude");
+        assert_eq!(config.ui.theme, "grafana");
     }
 
     #[test]

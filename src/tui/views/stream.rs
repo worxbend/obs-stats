@@ -2,7 +2,8 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::Line;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::metrics::Snapshot;
@@ -20,31 +21,75 @@ const LABEL_WIDTH: usize = 14;
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme;
     let snapshot = &app.snapshot;
-
-    let [charts, details] =
-        Layout::vertical([Constraint::Min(8), Constraint::Length(10)]).areas(area);
-
-    let chart_regions = views::deck(
-        charts,
-        &[Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)],
-        &[Constraint::Ratio(1, 2); 2],
+    let measured = snapshot.last_poll.is_some() || !snapshot.history.stream_bitrate.is_empty();
+    let [status, area] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let status_text = if !measured {
+        "Awaiting first OBS poll / output status unknown"
+    } else if app.telemetry_stale() {
+        "STALE / Retained telemetry, not current measurements"
+    } else if app.paused {
+        "Paused / retained telemetry"
+    } else {
+        "Output telemetry / rates derived from byte-counter deltas"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            status_text,
+            Style::default().fg(theme.muted),
+        ))),
+        status,
     );
+
+    let [charts, details] = Layout::vertical([
+        Constraint::Min(8),
+        Constraint::Length(if area.height < 25 { 11 } else { 12 }),
+    ])
+    .areas(area);
+
+    let chart_regions = if charts.width >= 96 {
+        Layout::horizontal([Constraint::Ratio(2, 3), Constraint::Ratio(1, 3)]).split(charts)
+    } else if charts.width >= 64 {
+        Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(charts)
+    } else {
+        Layout::vertical([Constraint::Ratio(1, 2); 2]).split(charts)
+    };
 
     let bitrate_block = chrome::panel_with_note(
         "Bitrate",
-        format!(
-            "now {} · peak {}",
-            util::bitrate(snapshot.stream_bitrate),
-            util::bitrate(snapshot.history.stream_bitrate.max())
-        ),
+        "measured / not a target",
         false,
         theme,
         app.unicode,
     );
     let bitrate_inner = chrome::frame_panel(frame, chart_regions[0], bitrate_block);
+    let [headline, bitrate_plot, summary] = timeline_layout(bitrate_inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                if !measured {
+                    "awaiting".into()
+                } else if app.telemetry_stale() || app.paused {
+                    "unavailable".into()
+                } else if snapshot.stream.active {
+                    util::bitrate(snapshot.stream_bitrate)
+                } else {
+                    "idle".into()
+                },
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" / stream throughput", Style::default().fg(theme.muted)),
+        ])),
+        headline,
+    );
+    frame.render_widget(
+        Paragraph::new(rate_summary(&snapshot.history.stream_bitrate, theme)),
+        summary,
+    );
     line_chart(
         frame,
-        bitrate_inner,
+        bitrate_plot,
         &snapshot.history.stream_bitrate,
         "bps",
         axis_bitrate,
@@ -55,17 +100,47 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     let congestion = snapshot.stream.congestion_percent();
-    let congestion_block = chrome::panel_with_note(
-        "Congestion",
-        util::percent(congestion),
-        false,
-        theme,
-        app.unicode,
-    );
+    let congestion_block =
+        chrome::panel_with_note("Congestion", "OBS backpressure", false, theme, app.unicode);
     let congestion_inner = chrome::frame_panel(frame, chart_regions[1], congestion_block);
+    let [headline, congestion_plot, summary] = timeline_layout(congestion_inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(views::value_unit(
+            if !measured {
+                "awaiting".into()
+            } else if snapshot.stream.active {
+                util::percent(congestion)
+            } else {
+                "idle".into()
+            },
+            "/ congestion",
+            if measured {
+                theme.color_when_high(congestion, 20.0, 50.0)
+            } else {
+                theme.muted
+            },
+            theme,
+        ))),
+        headline,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            if snapshot.history.congestion.is_empty() {
+                "No retained samples".to_string()
+            } else {
+                format!(
+                    "avg {:.1}% / peak {:.1}%",
+                    snapshot.history.congestion.mean(),
+                    snapshot.history.congestion.max()
+                )
+            },
+            Style::default().fg(theme.muted),
+        ))),
+        summary,
+    );
     line_chart(
         frame,
-        congestion_inner,
+        congestion_plot,
         &snapshot.history.congestion,
         "%",
         axis_percent,
@@ -77,7 +152,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
     let detail_regions = Layout::horizontal([Constraint::Ratio(1, 2); 2]).split(details);
 
-    let stream_block = if snapshot.stream.active {
+    let stream_block = if !measured {
+        chrome::panel_with_note("Stream output", "unknown", false, theme, app.unicode)
+    } else if app.telemetry_stale() || app.paused {
+        chrome::panel_with_badge(
+            "Stream output",
+            if app.paused { "PAUSED" } else { "STALE" },
+            theme.warning,
+            false,
+            theme,
+            app.unicode,
+        )
+    } else if snapshot.stream.active {
         let (note, color) = if snapshot.stream.reconnecting {
             ("reconnecting", theme.warning)
         } else {
@@ -88,31 +174,102 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         chrome::panel_with_note("Stream output", "idle", false, theme, app.unicode)
     };
     let stream_inner = chrome::frame_panel(frame, detail_regions[0], stream_block);
-    frame.render_widget(Paragraph::new(stream_detail(snapshot, theme)), stream_inner);
+    let mut stream_rows = if measured {
+        stream_detail(snapshot, theme)
+    } else {
+        vec![chrome::placeholder("Awaiting output status", theme)]
+    };
+    stream_rows.push(Line::from(""));
+    stream_rows.push(chrome::placeholder(
+        "Loss counts / this stream output",
+        theme,
+    ));
+    frame.render_widget(Paragraph::new(stream_rows), stream_inner);
 
-    let record_block = match (snapshot.record.active, snapshot.record.paused) {
-        (true, true) => chrome::panel_with_badge(
+    let record_block = if !measured {
+        chrome::panel_with_note("Recording output", "unknown", false, theme, app.unicode)
+    } else if app.telemetry_stale() || app.paused {
+        chrome::panel_with_badge(
             "Recording output",
-            "paused",
+            if app.paused { "PAUSED" } else { "STALE" },
             theme.warning,
             false,
             theme,
             app.unicode,
-        ),
-        (true, false) => chrome::panel_with_badge(
-            "Recording output",
-            "REC",
-            theme.info,
-            false,
-            theme,
-            app.unicode,
-        ),
-        (false, _) => {
-            chrome::panel_with_note("Recording output", "idle", false, theme, app.unicode)
+        )
+    } else {
+        match (snapshot.record.active, snapshot.record.paused) {
+            (true, true) => chrome::panel_with_badge(
+                "Recording output",
+                "paused",
+                theme.warning,
+                false,
+                theme,
+                app.unicode,
+            ),
+            (true, false) => chrome::panel_with_badge(
+                "Recording output",
+                "REC",
+                theme.info,
+                false,
+                theme,
+                app.unicode,
+            ),
+            (false, _) => {
+                chrome::panel_with_note("Recording output", "idle", false, theme, app.unicode)
+            }
         }
     };
     let record_inner = chrome::frame_panel(frame, detail_regions[1], record_block);
-    frame.render_widget(Paragraph::new(record_detail(snapshot, theme)), record_inner);
+    let [rows, rate] = Layout::vertical([
+        Constraint::Min(6),
+        Constraint::Length(if record_inner.height >= 9 { 3 } else { 0 }),
+    ])
+    .areas(record_inner);
+    frame.render_widget(
+        Paragraph::new(if measured {
+            record_detail(snapshot, theme)
+        } else {
+            vec![chrome::placeholder("Awaiting output status", theme)]
+        }),
+        rows,
+    );
+    let [label, plot] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(rate);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            if snapshot.history.record_bitrate.is_empty() {
+                "Awaiting write-rate samples"
+            } else {
+                "Write rate / retained polls"
+            },
+            Style::default().fg(theme.muted),
+        ))),
+        label,
+    );
+    views::sparkline(
+        frame,
+        plot,
+        &snapshot.history.record_bitrate,
+        1_000_000.0,
+        theme.info,
+        app.unicode,
+    );
+}
+
+fn timeline_layout(area: Rect) -> [Rect; 3] {
+    Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(u16::from(area.height >= 5)),
+    ])
+    .areas(area)
+}
+
+fn rate_summary(history: &crate::metrics::History, theme: &Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        views::history_summary(history, util::bitrate),
+        Style::default().fg(theme.muted),
+    ))
 }
 
 /// Every field of `GetStreamStatus`, plus what we derive from it.
@@ -252,7 +409,11 @@ pub fn record_detail(snapshot: &Snapshot, theme: &Theme) -> Vec<Line<'static>> {
         ),
         chrome::row(
             "Remaining",
-            remaining_estimate(snapshot),
+            if record.paused {
+                "paused".to_string()
+            } else {
+                remaining_estimate(snapshot)
+            },
             theme.muted,
             LABEL_WIDTH,
             theme,
@@ -284,6 +445,80 @@ pub fn remaining_estimate(snapshot: &Snapshot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn render_text(app: &mut App, width: u16, height: u16) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), app))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn unmeasured_outputs_are_unknown_not_idle_zeroes() {
+        let mut app = App::new(crate::config::Config::default());
+        let text = render_text(&mut app, 120, 30);
+        assert!(text.contains("output status unknown"));
+        assert!(text.contains("Awaiting output status"));
+        assert!(!text.contains("0 kbps"));
+        assert!(!text.contains("idle"));
+    }
+
+    #[test]
+    fn compact_stream_keeps_both_outputs_and_retained_rates() {
+        let mut app = App::new(crate::config::Config::default());
+        app.snapshot.stream.active = true;
+        app.snapshot.record.active = true;
+        app.snapshot.stream_bitrate = 6_000_000.0;
+        app.snapshot.history.stream_bitrate.push(5_000_000.0);
+        app.snapshot.history.stream_bitrate.push(7_000_000.0);
+        app.snapshot.history.congestion.push(4.0);
+        let text = render_text(&mut app, 80, 24);
+        assert!(text.contains("6.00 Mbps"), "{text}");
+        assert!(text.contains("Stream output"));
+        assert!(text.contains("Recording output"));
+        assert!(
+            text.contains("Remaining"),
+            "recording details outrank decorative history: {text}"
+        );
+        assert!(text.contains("Retained telemetry"));
+    }
+
+    #[test]
+    fn bitrate_summary_uses_mean_peak_and_real_sample_count() {
+        let mut history = crate::metrics::History::new(8);
+        assert!(
+            crate::tui::testing::line_text(&rate_summary(&history, theme::FALLBACK))
+                .contains("awaiting")
+        );
+        history.push(5_000_000.0);
+        history.push(7_000_000.0);
+        let text = crate::tui::testing::line_text(&rate_summary(&history, theme::FALLBACK));
+        assert!(text.contains("avg 6.00 Mbps"));
+        assert!(text.contains("peak 7.00 Mbps"));
+        assert!(text.contains("2 samples"));
+    }
+
+    #[test]
+    fn paused_recording_does_not_reuse_a_retained_rate_for_remaining_time() {
+        let mut snapshot = Snapshot::new(8);
+        snapshot.record.active = true;
+        snapshot.record.paused = true;
+        snapshot.record_bitrate = 8_000_000.0;
+        snapshot.stats.available_disk_space = 3600.0;
+        let rows = record_detail(&snapshot, theme::FALLBACK);
+        assert_eq!(rows.last().unwrap().spans[1].content, "paused");
+    }
+
     use crate::obs::stats::{RecordStatus, Stats, StreamStatus};
     use crate::tui::testing::lines_text;
     use crate::tui::theme;
