@@ -1,10 +1,10 @@
 [package]
 name = "obs-stats"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-description = "A btop-style terminal dashboard for OBS Studio, powered by obs-websocket 5.x"
+description = "A terminal-native observability dashboard for OBS Studio, powered by obs-websocket 5.x"
 repository = "https://github.com/worxbend/obs-stats"
 homepage = "https://worxbend.github.io/obs-stats/"
 readme = "README.md"
